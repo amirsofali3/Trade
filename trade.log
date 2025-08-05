@@ -1,0 +1,486 @@
+2025-08-02 16:13:22,000 - Main - ERROR - Error loading configuration: [Errno 2] No such file or directory: 'config.json'
+2025-08-02 16:13:22,000 - Main - INFO - Initializing components...
+2025-08-02 16:13:22,554 - DBManager - INFO - Database tables created or already exist
+2025-08-02 16:13:22,554 - DBManager - INFO - DatabaseManager initialized
+2025-08-02 16:13:22,570 - OHLCVCollector - INFO - Initialized OHLCV collector for binance
+2025-08-02 16:13:22,570 - IndicatorCalculator - INFO - Indicator calculator initialized
+2025-08-02 16:13:22,571 - TickCollector - INFO - Initialized Tick collector for BTCUSDT
+2025-08-02 16:13:22,571 - SentimentCollector - INFO - Sentiment collector initialized
+2025-08-02 16:13:22,571 - OrderbookCollector - INFO - Initialized Orderbook collector for BTCUSDT with depth 20
+2025-08-02 16:13:22,572 - FeatureEncoder - INFO - Initialized OHLCV encoder with window size 20 and 13 features
+2025-08-02 16:13:22,572 - FeatureEncoder - INFO - Initialized Indicator encoder with window size 20
+2025-08-02 16:13:22,572 - FeatureEncoder - INFO - Initialized Sentiment encoder with output dim 1
+2025-08-02 16:13:22,573 - FeatureEncoder - INFO - Initialized Orderbook encoder with depth 10 and output dim 42
+2025-08-02 16:13:22,574 - FeatureEncoder - INFO - Initialized TickData encoder with window size 100 and output dim 3
+2025-08-02 16:13:22,575 - FeatureEncoder - INFO - Initialized CandlePattern encoder with 61 patterns
+2025-08-02 16:13:22,810 - Gating - INFO - Initialized FeatureGatingModule with 6 feature groups
+2025-08-02 16:13:23,362 - NeuralNetwork - INFO - Initialized MarketTransformer with hidden_dim=128, n_layers=2, n_heads=4
+2025-08-02 16:13:29,146 - NeuralNetwork - INFO - Initialized OnlineLearner with buffer_size=1000, batch_size=32
+2025-08-02 16:13:29,146 - SignalGenerator - INFO - Initialized SignalGenerator with confidence threshold 0.7
+2025-08-02 16:13:29,148 - Main - INFO - No model checkpoints found
+2025-08-02 16:13:29,148 - TradeExecutor - INFO - Initialized TradeExecutor with exchange=coinex, demo_mode=True
+2025-08-02 16:13:29,244 - PositionManager - INFO - Loaded 0 active positions from database
+2025-08-02 16:13:29,244 - PositionManager - INFO - Initialized PositionManager with SL=0.03, TP=[0.05, 0.1, 0.15]
+2025-08-02 16:13:29,246 - RiskManager - INFO - Initialized RiskManager with max_risk_per_trade=0.02, max_daily_loss=0.05
+2025-08-02 16:13:29,246 - Main - INFO - Trading bot initialization complete
+2025-08-02 16:13:29,246 - Main - INFO - Starting trading bot...
+2025-08-02 16:13:29,247 - TickCollector - INFO - Connecting to websocket: wss://stream.binance.com:9443/ws/btcusdt@trade
+2025-08-02 16:13:29,248 - TickCollector - INFO - Tick collector started
+2025-08-02 16:13:29,249 - Main - INFO - Started tick collector
+2025-08-02 16:13:29,249 - SentimentCollector - INFO - Collecting sentiment data from alternative
+2025-08-02 16:13:29,250 - SentimentCollector - INFO - Sentiment collector started
+2025-08-02 16:13:29,250 - Main - INFO - Started sentiment collector
+2025-08-02 16:13:29,251 - OrderbookCollector - INFO - Connecting to orderbook websocket for BTCUSDT: wss://stream.binance.com:9443/ws/btcusdt@depth20@100ms
+2025-08-02 16:13:29,251 - OrderbookCollector - INFO - Orderbook collector started
+2025-08-02 16:13:29,252 - Main - INFO - Started orderbook collector
+2025-08-02 16:13:29,253 - NeuralNetwork - INFO - Online learner started
+2025-08-02 16:13:29,253 - Main - INFO - Started online learner
+2025-08-02 16:13:29,258 - TradeExecutor - INFO - Trade executor started
+2025-08-02 16:13:29,258 - Main - INFO - Started trade executor
+2025-08-02 16:13:29,260 - Main - INFO - Started main loop
+2025-08-02 16:13:29,261 - Main - INFO - Started web interface
+2025-08-02 16:13:29,324 - Gating - WARNING - No features provided to gating module
+2025-08-02 16:13:29,338 - NeuralNetwork - WARNING - No features provided to model
+2025-08-02 16:13:29,349 - SignalGenerator - ERROR - Error generating signal: 'float' object has no attribute 'cpu'
+2025-08-02 16:13:29,570 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.10.138:5000
+2025-08-02 16:13:29,571 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2025-08-02 16:13:31,536 - websocket - INFO - Websocket connected
+2025-08-02 16:13:31,536 - OrderbookCollector - INFO - Orderbook websocket connection established for BTCUSDT
+2025-08-02 16:13:31,643 - websocket - INFO - Websocket connected
+2025-08-02 16:13:31,643 - TickCollector - INFO - Websocket connection established
+2025-08-02 16:13:33,296 - SentimentCollector - INFO - Collected sentiment data from alternative: neutral (index: 55)
+2025-08-02 16:13:34,885 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:13:39,957 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:13:45,008 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:13:50,054 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:13:55,097 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:14:00,265 - Main - INFO - Stopping bot due to keyboard interrupt
+2025-08-02 16:14:00,265 - Main - INFO - Stopping trading bot...
+2025-08-02 16:14:00,534 - TickCollector - INFO - Websocket closed: None (code: None)
+2025-08-02 16:14:00,561 - TickCollector - INFO - Tick collector stopped
+2025-08-02 16:14:00,561 - Main - INFO - Stopped tick collector
+2025-08-02 16:14:00,563 - SentimentCollector - INFO - Sentiment collector stopped
+2025-08-02 16:14:00,563 - Main - INFO - Stopped sentiment collector
+2025-08-02 16:14:00,596 - OrderbookCollector - INFO - Orderbook websocket closed for BTCUSDT: None (code: None)
+2025-08-02 16:14:01,045 - OrderbookCollector - INFO - Orderbook collector stopped
+2025-08-02 16:14:01,045 - Main - INFO - Stopped orderbook collector
+2025-08-02 16:14:01,047 - NeuralNetwork - INFO - Online learner stopped
+2025-08-02 16:14:01,047 - Main - INFO - Stopped online learner
+2025-08-02 16:14:01,047 - TradeExecutor - INFO - Trade executor stopped
+2025-08-02 16:14:01,048 - Main - INFO - Stopped trade executor
+2025-08-02 16:14:01,048 - Main - INFO - Trading bot stopped
+2025-08-02 16:14:33,361 - Main - ERROR - Error loading configuration: [Errno 2] No such file or directory: 'config.json'
+2025-08-02 16:14:33,361 - Main - INFO - Initializing components...
+2025-08-02 16:14:33,471 - DBManager - INFO - Database tables created or already exist
+2025-08-02 16:14:33,472 - DBManager - INFO - DatabaseManager initialized
+2025-08-02 16:14:33,488 - OHLCVCollector - INFO - Initialized OHLCV collector for binance
+2025-08-02 16:14:33,488 - IndicatorCalculator - INFO - Indicator calculator initialized
+2025-08-02 16:14:33,488 - TickCollector - INFO - Initialized Tick collector for BTCUSDT
+2025-08-02 16:14:33,489 - SentimentCollector - INFO - Sentiment collector initialized
+2025-08-02 16:14:33,489 - OrderbookCollector - INFO - Initialized Orderbook collector for BTCUSDT with depth 20
+2025-08-02 16:14:33,490 - FeatureEncoder - INFO - Initialized OHLCV encoder with window size 20 and 13 features
+2025-08-02 16:14:33,491 - FeatureEncoder - INFO - Initialized Indicator encoder with window size 20
+2025-08-02 16:14:33,491 - FeatureEncoder - INFO - Initialized Sentiment encoder with output dim 1
+2025-08-02 16:14:33,492 - FeatureEncoder - INFO - Initialized Orderbook encoder with depth 10 and output dim 42
+2025-08-02 16:14:33,492 - FeatureEncoder - INFO - Initialized TickData encoder with window size 100 and output dim 3
+2025-08-02 16:14:33,492 - FeatureEncoder - INFO - Initialized CandlePattern encoder with 61 patterns
+2025-08-02 16:14:33,497 - Gating - INFO - Initialized FeatureGatingModule with 6 feature groups
+2025-08-02 16:14:33,513 - NeuralNetwork - INFO - Initialized MarketTransformer with hidden_dim=128, n_layers=2, n_heads=4
+2025-08-02 16:14:35,821 - NeuralNetwork - INFO - Initialized OnlineLearner with buffer_size=1000, batch_size=32
+2025-08-02 16:14:35,822 - SignalGenerator - INFO - Initialized SignalGenerator with confidence threshold 0.7
+2025-08-02 16:14:35,823 - Main - INFO - No model checkpoints found
+2025-08-02 16:14:35,824 - TradeExecutor - INFO - Initialized TradeExecutor with exchange=coinex, demo_mode=True
+2025-08-02 16:14:35,841 - PositionManager - INFO - Loaded 0 active positions from database
+2025-08-02 16:14:35,842 - PositionManager - INFO - Initialized PositionManager with SL=0.03, TP=[0.05, 0.1, 0.15]
+2025-08-02 16:14:35,842 - RiskManager - INFO - Initialized RiskManager with max_risk_per_trade=0.02, max_daily_loss=0.05
+2025-08-02 16:14:35,842 - Main - INFO - Trading bot initialization complete
+2025-08-02 16:14:35,843 - Main - INFO - Starting trading bot...
+2025-08-02 16:14:35,844 - TickCollector - INFO - Connecting to websocket: wss://stream.binance.com:9443/ws/btcusdt@trade
+2025-08-02 16:14:35,844 - TickCollector - INFO - Tick collector started
+2025-08-02 16:14:35,845 - Main - INFO - Started tick collector
+2025-08-02 16:14:35,845 - SentimentCollector - INFO - Collecting sentiment data from alternative
+2025-08-02 16:14:35,846 - SentimentCollector - INFO - Sentiment collector started
+2025-08-02 16:14:35,847 - Main - INFO - Started sentiment collector
+2025-08-02 16:14:35,848 - OrderbookCollector - INFO - Connecting to orderbook websocket for BTCUSDT: wss://stream.binance.com:9443/ws/btcusdt@depth20@100ms
+2025-08-02 16:14:35,848 - OrderbookCollector - INFO - Orderbook collector started
+2025-08-02 16:14:35,852 - Main - INFO - Started orderbook collector
+2025-08-02 16:14:35,853 - NeuralNetwork - INFO - Online learner started
+2025-08-02 16:14:35,853 - Main - INFO - Started online learner
+2025-08-02 16:14:35,856 - TradeExecutor - INFO - Trade executor started
+2025-08-02 16:14:35,856 - Main - INFO - Started trade executor
+2025-08-02 16:14:35,860 - Main - INFO - Started main loop
+2025-08-02 16:14:35,860 - Main - INFO - Started web interface
+2025-08-02 16:14:35,880 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:14:36,073 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.10.138:5000
+2025-08-02 16:14:36,074 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2025-08-02 16:14:37,055 - SentimentCollector - INFO - Collected sentiment data from alternative: neutral (index: 55)
+2025-08-02 16:14:38,117 - websocket - INFO - Websocket connected
+2025-08-02 16:14:38,118 - OrderbookCollector - INFO - Orderbook websocket connection established for BTCUSDT
+2025-08-02 16:14:38,182 - websocket - INFO - Websocket connected
+2025-08-02 16:14:38,183 - TickCollector - INFO - Websocket connection established
+2025-08-02 16:14:40,925 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:14:45,969 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:14:51,150 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:14:51,211 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:14:51] "GET / HTTP/1.1" 200 -
+2025-08-02 16:14:55,320 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:14:55] "GET /api/status HTTP/1.1" 200 -
+2025-08-02 16:14:55,321 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:14:55] "GET /api/plot?timeframe=5m HTTP/1.1" 200 -
+2025-08-02 16:14:55,321 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:14:55] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:14:55,325 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:14:55] "GET /api/performance HTTP/1.1" 200 -
+2025-08-02 16:14:55,326 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:14:55] "GET /api/signals HTTP/1.1" 200 -
+2025-08-02 16:14:55,327 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:14:55] "GET /api/model-stats HTTP/1.1" 200 -
+2025-08-02 16:14:55,334 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:14:55] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2025-08-02 16:14:55,335 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:14:55] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:14:56,196 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:15:00,322 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:00] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:15:00,325 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:00] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:15:01,236 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:15:05,324 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:05] "GET /api/status HTTP/1.1" 200 -
+2025-08-02 16:15:05,325 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:05] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:15:05,328 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:05] "GET /api/signals HTTP/1.1" 200 -
+2025-08-02 16:15:05,329 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:05] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:15:06,281 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:15:06,962 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:06] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:15:10,324 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:10] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:15:10,327 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:10] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:15:11,326 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:15:15,325 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:15] "GET /api/status HTTP/1.1" 200 -
+2025-08-02 16:15:15,329 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:15] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:15:15,330 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:15] "GET /api/signals HTTP/1.1" 200 -
+2025-08-02 16:15:15,333 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:15] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:15:16,370 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:15:17,881 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:17] "GET /api/signals HTTP/1.1" 200 -
+2025-08-02 16:15:20,322 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:20] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:15:20,325 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:20] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:15:21,410 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:15:25,325 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:25] "GET /api/status HTTP/1.1" 200 -
+2025-08-02 16:15:25,325 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:25] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:15:25,326 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:25] "GET /api/performance HTTP/1.1" 200 -
+2025-08-02 16:15:25,327 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:25] "GET /api/plot?timeframe=5m HTTP/1.1" 200 -
+2025-08-02 16:15:25,329 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:25] "GET /api/signals HTTP/1.1" 200 -
+2025-08-02 16:15:25,330 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:25] "GET /api/model-stats HTTP/1.1" 200 -
+2025-08-02 16:15:25,332 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:25] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:15:26,458 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:15:31,086 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:31] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:15:31,088 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:15:31] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:15:31,498 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:15:31,945 - Main - INFO - Stopping bot due to keyboard interrupt
+2025-08-02 16:15:31,945 - Main - INFO - Stopping trading bot...
+2025-08-02 16:15:32,172 - TickCollector - INFO - Websocket closed: None (code: None)
+2025-08-02 16:15:32,450 - TickCollector - INFO - Tick collector stopped
+2025-08-02 16:15:32,450 - Main - INFO - Stopped tick collector
+2025-08-02 16:15:32,451 - SentimentCollector - INFO - Sentiment collector stopped
+2025-08-02 16:15:32,452 - Main - INFO - Stopped sentiment collector
+2025-08-02 16:15:32,458 - OrderbookCollector - INFO - Orderbook websocket closed for BTCUSDT: None (code: None)
+2025-08-02 16:15:32,979 - OrderbookCollector - INFO - Orderbook collector stopped
+2025-08-02 16:15:32,980 - Main - INFO - Stopped orderbook collector
+2025-08-02 16:15:32,981 - NeuralNetwork - INFO - Online learner stopped
+2025-08-02 16:15:32,981 - Main - INFO - Stopped online learner
+2025-08-02 16:15:32,982 - TradeExecutor - INFO - Trade executor stopped
+2025-08-02 16:15:32,982 - Main - INFO - Stopped trade executor
+2025-08-02 16:15:32,983 - Main - INFO - Trading bot stopped
+2025-08-02 16:18:30,114 - Main - INFO - Initializing components...
+2025-08-02 16:18:30,211 - DBManager - INFO - Database tables created or already exist
+2025-08-02 16:18:30,211 - DBManager - INFO - DatabaseManager initialized
+2025-08-02 16:18:30,228 - OHLCVCollector - INFO - Initialized OHLCV collector for binance
+2025-08-02 16:18:30,229 - IndicatorCalculator - INFO - Indicator calculator initialized
+2025-08-02 16:18:30,229 - TickCollector - INFO - Initialized Tick collector for BTCUSDT
+2025-08-02 16:18:30,229 - SentimentCollector - INFO - Sentiment collector initialized
+2025-08-02 16:18:30,230 - OrderbookCollector - INFO - Initialized Orderbook collector for BTCUSDT with depth 20
+2025-08-02 16:18:30,231 - FeatureEncoder - INFO - Initialized OHLCV encoder with window size 20 and 13 features
+2025-08-02 16:18:30,231 - FeatureEncoder - INFO - Initialized Indicator encoder with window size 20
+2025-08-02 16:18:30,232 - FeatureEncoder - INFO - Initialized Sentiment encoder with output dim 1
+2025-08-02 16:18:30,232 - FeatureEncoder - INFO - Initialized Orderbook encoder with depth 10 and output dim 42
+2025-08-02 16:18:30,232 - FeatureEncoder - INFO - Initialized TickData encoder with window size 100 and output dim 3
+2025-08-02 16:18:30,233 - FeatureEncoder - INFO - Initialized CandlePattern encoder with 61 patterns
+2025-08-02 16:18:30,237 - Gating - INFO - Initialized FeatureGatingModule with 6 feature groups
+2025-08-02 16:18:30,253 - NeuralNetwork - INFO - Initialized MarketTransformer with hidden_dim=128, n_layers=2, n_heads=4
+2025-08-02 16:18:32,557 - NeuralNetwork - INFO - Initialized OnlineLearner with buffer_size=1000, batch_size=32
+2025-08-02 16:18:32,557 - SignalGenerator - INFO - Initialized SignalGenerator with confidence threshold 0.7
+2025-08-02 16:18:32,559 - Main - INFO - No model checkpoints found
+2025-08-02 16:18:32,559 - TradeExecutor - INFO - Initialized TradeExecutor with exchange=coinex, demo_mode=True
+2025-08-02 16:18:32,577 - PositionManager - INFO - Loaded 0 active positions from database
+2025-08-02 16:18:32,578 - PositionManager - INFO - Initialized PositionManager with SL=0.03, TP=[0.05, 0.1, 0.15]
+2025-08-02 16:18:32,579 - RiskManager - INFO - Initialized RiskManager with max_risk_per_trade=0.02, max_daily_loss=0.05
+2025-08-02 16:18:32,579 - Main - INFO - Trading bot initialization complete
+2025-08-02 16:18:32,580 - Main - INFO - Starting trading bot...
+2025-08-02 16:18:32,581 - TickCollector - INFO - Connecting to websocket: wss://stream.binance.com:9443/ws/btcusdt@trade
+2025-08-02 16:18:32,582 - TickCollector - INFO - Tick collector started
+2025-08-02 16:18:32,582 - Main - INFO - Started tick collector
+2025-08-02 16:18:32,583 - SentimentCollector - INFO - Collecting sentiment data from alternative
+2025-08-02 16:18:32,584 - SentimentCollector - INFO - Sentiment collector started
+2025-08-02 16:18:32,584 - Main - INFO - Started sentiment collector
+2025-08-02 16:18:32,585 - OrderbookCollector - INFO - Connecting to orderbook websocket for BTCUSDT: wss://stream.binance.com:9443/ws/btcusdt@depth20@100ms
+2025-08-02 16:18:32,585 - OrderbookCollector - INFO - Orderbook collector started
+2025-08-02 16:18:32,586 - Main - INFO - Started orderbook collector
+2025-08-02 16:18:32,588 - NeuralNetwork - INFO - Online learner started
+2025-08-02 16:18:32,590 - Main - INFO - Started online learner
+2025-08-02 16:18:32,594 - TradeExecutor - INFO - Trade executor started
+2025-08-02 16:18:32,594 - Main - INFO - Started trade executor
+2025-08-02 16:18:32,596 - Main - INFO - Started main loop
+2025-08-02 16:18:32,600 - Main - INFO - Started web interface
+2025-08-02 16:18:32,620 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:18:32,851 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.10.138:5000
+2025-08-02 16:18:32,852 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2025-08-02 16:18:33,777 - SentimentCollector - INFO - Collected sentiment data from alternative: neutral (index: 55)
+2025-08-02 16:18:34,709 - websocket - INFO - Websocket connected
+2025-08-02 16:18:34,710 - OrderbookCollector - INFO - Orderbook websocket connection established for BTCUSDT
+2025-08-02 16:18:34,804 - websocket - INFO - Websocket connected
+2025-08-02 16:18:34,804 - TickCollector - INFO - Websocket connection established
+2025-08-02 16:18:37,665 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:18:39,722 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:39] "GET /api/status HTTP/1.1" 200 -
+2025-08-02 16:18:39,738 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:39] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:18:39,742 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:39] "GET /api/performance HTTP/1.1" 200 -
+2025-08-02 16:18:39,744 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:39] "GET /api/plot?timeframe=5m HTTP/1.1" 200 -
+2025-08-02 16:18:39,747 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:39] "GET /api/signals HTTP/1.1" 200 -
+2025-08-02 16:18:39,749 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:39] "GET /api/model-stats HTTP/1.1" 200 -
+2025-08-02 16:18:39,752 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:39] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:18:40,322 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:40] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:18:40,326 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:40] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:18:41,326 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:41] "GET / HTTP/1.1" 200 -
+2025-08-02 16:18:42,103 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:42] "GET /api/status HTTP/1.1" 200 -
+2025-08-02 16:18:42,104 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:42] "GET /api/plot?timeframe=5m HTTP/1.1" 200 -
+2025-08-02 16:18:42,106 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:42] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:18:42,108 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:42] "GET /api/performance HTTP/1.1" 200 -
+2025-08-02 16:18:42,109 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:42] "GET /api/signals HTTP/1.1" 200 -
+2025-08-02 16:18:42,111 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:42] "GET /api/model-stats HTTP/1.1" 200 -
+2025-08-02 16:18:42,112 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:42] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:18:42,707 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:18:47,105 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:47] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:18:47,108 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:47] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:18:47,748 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:18:52,788 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:18:53,086 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:53] "GET /api/status HTTP/1.1" 200 -
+2025-08-02 16:18:53,087 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:53] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:18:53,089 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:53] "GET /api/signals HTTP/1.1" 200 -
+2025-08-02 16:18:53,091 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:53] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:18:57,831 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:18:58,085 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:58] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:18:58,088 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:18:58] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:19:02,873 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:19:03,086 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:03] "GET /api/status HTTP/1.1" 200 -
+2025-08-02 16:19:03,087 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:03] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:19:03,087 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:03] "GET /api/signals HTTP/1.1" 200 -
+2025-08-02 16:19:03,088 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:03] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:19:08,085 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:08] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:19:08,088 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:08] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:19:11,048 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:19:13,087 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:13] "GET /api/status HTTP/1.1" 200 -
+2025-08-02 16:19:13,088 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:13] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:19:13,088 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:13] "GET /api/performance HTTP/1.1" 200 -
+2025-08-02 16:19:13,091 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:13] "GET /api/plot?timeframe=5m HTTP/1.1" 200 -
+2025-08-02 16:19:13,093 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:13] "GET /api/signals HTTP/1.1" 200 -
+2025-08-02 16:19:13,095 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:13] "GET /api/model-stats HTTP/1.1" 200 -
+2025-08-02 16:19:13,096 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:13] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:19:16,088 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:19:18,084 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:18] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:19:18,087 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:18] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:19:21,132 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:19:23,086 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:23] "GET /api/status HTTP/1.1" 200 -
+2025-08-02 16:19:23,086 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:23] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:19:23,089 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:23] "GET /api/signals HTTP/1.1" 200 -
+2025-08-02 16:19:23,091 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:23] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:19:26,175 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:19:28,086 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:28] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:19:28,088 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:28] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:19:31,217 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:19:33,084 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:33] "GET /api/status HTTP/1.1" 200 -
+2025-08-02 16:19:33,085 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:33] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:19:33,087 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:33] "GET /api/signals HTTP/1.1" 200 -
+2025-08-02 16:19:33,089 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:33] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:19:36,266 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:19:38,084 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:38] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:19:38,087 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:38] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:19:41,311 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:19:43,086 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:43] "GET /api/status HTTP/1.1" 200 -
+2025-08-02 16:19:43,087 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:43] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:19:43,088 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:43] "GET /api/performance HTTP/1.1" 200 -
+2025-08-02 16:19:43,090 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:43] "GET /api/plot?timeframe=5m HTTP/1.1" 200 -
+2025-08-02 16:19:43,092 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:43] "GET /api/signals HTTP/1.1" 200 -
+2025-08-02 16:19:43,094 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:43] "GET /api/model-stats HTTP/1.1" 200 -
+2025-08-02 16:19:43,096 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:19:43] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:19:46,357 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:19:51,405 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:19:56,447 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:20:01,494 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:20:06,537 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:20:11,582 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:20:13,086 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:20:13] "GET /api/performance HTTP/1.1" 200 -
+2025-08-02 16:20:13,087 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:20:13] "GET /api/plot?timeframe=5m HTTP/1.1" 200 -
+2025-08-02 16:20:13,089 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:20:13] "GET /api/model-stats HTTP/1.1" 200 -
+2025-08-02 16:20:16,626 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:20:21,085 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:20:21] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-02 16:20:21,086 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:20:21] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-02 16:20:21,089 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:20:21] "GET /api/status HTTP/1.1" 200 -
+2025-08-02 16:20:21,090 - werkzeug - INFO - 192.168.10.138 - - [02/Aug/2025 16:20:21] "GET /api/signals HTTP/1.1" 200 -
+2025-08-02 16:20:21,668 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:20:26,745 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:20:31,784 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:20:36,827 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-02 16:20:39,217 - Main - INFO - Stopping bot due to keyboard interrupt
+2025-08-02 16:20:39,218 - Main - INFO - Stopping trading bot...
+2025-08-02 16:20:39,467 - TickCollector - INFO - Websocket closed: None (code: None)
+2025-08-02 16:20:39,799 - TickCollector - INFO - Tick collector stopped
+2025-08-02 16:20:39,800 - Main - INFO - Stopped tick collector
+2025-08-02 16:20:39,801 - SentimentCollector - INFO - Sentiment collector stopped
+2025-08-02 16:20:39,801 - Main - INFO - Stopped sentiment collector
+2025-08-02 16:20:39,822 - OrderbookCollector - INFO - Orderbook websocket closed for BTCUSDT: None (code: None)
+2025-08-02 16:20:40,351 - OrderbookCollector - INFO - Orderbook collector stopped
+2025-08-02 16:20:40,351 - Main - INFO - Stopped orderbook collector
+2025-08-02 16:20:40,352 - NeuralNetwork - INFO - Online learner stopped
+2025-08-02 16:20:40,353 - Main - INFO - Stopped online learner
+2025-08-02 16:20:40,353 - TradeExecutor - INFO - Trade executor stopped
+2025-08-02 16:20:40,354 - Main - INFO - Stopped trade executor
+2025-08-02 16:20:40,354 - Main - INFO - Trading bot stopped
+2025-08-05 15:28:00,288 - Main - INFO - Initializing components...
+2025-08-05 15:28:00,882 - DBManager - INFO - Database tables created or already exist
+2025-08-05 15:28:00,882 - DBManager - INFO - DatabaseManager initialized
+2025-08-05 15:28:00,898 - OHLCVCollector - INFO - Initialized OHLCV collector for binance
+2025-08-05 15:28:00,898 - IndicatorCalculator - INFO - Indicator calculator initialized
+2025-08-05 15:28:00,898 - TickCollector - INFO - Initialized Tick collector for BTCUSDT
+2025-08-05 15:28:00,898 - SentimentCollector - INFO - Sentiment collector initialized
+2025-08-05 15:28:00,898 - OrderbookCollector - INFO - Initialized Orderbook collector for BTCUSDT with depth 20
+2025-08-05 15:28:00,898 - FeatureEncoder - INFO - Initialized OHLCV encoder with window size 20 and 13 features
+2025-08-05 15:28:00,898 - FeatureEncoder - INFO - Initialized Indicator encoder with window size 20
+2025-08-05 15:28:00,898 - FeatureEncoder - INFO - Initialized Sentiment encoder with output dim 1
+2025-08-05 15:28:00,898 - FeatureEncoder - INFO - Initialized Orderbook encoder with depth 10 and output dim 42
+2025-08-05 15:28:00,898 - FeatureEncoder - INFO - Initialized TickData encoder with window size 100 and output dim 3
+2025-08-05 15:28:00,898 - FeatureEncoder - INFO - Initialized CandlePattern encoder with 61 patterns
+2025-08-05 15:28:01,149 - Gating - INFO - Initialized FeatureGatingModule with 6 feature groups
+2025-08-05 15:28:01,447 - NeuralNetwork - INFO - Initialized MarketTransformer with hidden_dim=128, n_layers=2, n_heads=4
+2025-08-05 15:28:12,288 - NeuralNetwork - INFO - Initialized OnlineLearner with buffer_size=1000, batch_size=32
+2025-08-05 15:28:12,288 - SignalGenerator - INFO - Initialized SignalGenerator with confidence threshold 0.7
+2025-08-05 15:28:12,288 - Main - INFO - No model checkpoints found
+2025-08-05 15:28:12,288 - TradeExecutor - INFO - Initialized TradeExecutor with exchange=coinex, demo_mode=True
+2025-08-05 15:28:12,522 - PositionManager - INFO - Loaded 0 active positions from database
+2025-08-05 15:28:12,522 - PositionManager - INFO - Initialized PositionManager with SL=0.03, TP=[0.05, 0.1, 0.15]
+2025-08-05 15:28:12,522 - RiskManager - INFO - Initialized RiskManager with max_risk_per_trade=0.02, max_daily_loss=0.05
+2025-08-05 15:28:12,522 - Main - INFO - Trading bot initialization complete
+2025-08-05 15:28:12,522 - Main - INFO - Starting trading bot...
+2025-08-05 15:28:12,522 - TickCollector - INFO - Connecting to websocket: wss://stream.binance.com:9443/ws/btcusdt@trade
+2025-08-05 15:28:12,522 - TickCollector - INFO - Tick collector started
+2025-08-05 15:28:12,522 - Main - INFO - Started tick collector
+2025-08-05 15:28:12,522 - SentimentCollector - INFO - Collecting sentiment data from alternative
+2025-08-05 15:28:12,522 - SentimentCollector - INFO - Sentiment collector started
+2025-08-05 15:28:12,522 - Main - INFO - Started sentiment collector
+2025-08-05 15:28:12,522 - OrderbookCollector - INFO - Connecting to orderbook websocket for BTCUSDT: wss://stream.binance.com:9443/ws/btcusdt@depth20@100ms
+2025-08-05 15:28:12,522 - OrderbookCollector - INFO - Orderbook collector started
+2025-08-05 15:28:12,522 - Main - INFO - Started orderbook collector
+2025-08-05 15:28:12,522 - NeuralNetwork - INFO - Online learner started
+2025-08-05 15:28:12,522 - Main - INFO - Started online learner
+2025-08-05 15:28:12,538 - TradeExecutor - INFO - Trade executor started
+2025-08-05 15:28:12,538 - Main - INFO - Started trade executor
+2025-08-05 15:28:12,538 - Main - INFO - Started main loop
+2025-08-05 15:28:12,538 - Main - INFO - Started web interface
+2025-08-05 15:28:12,913 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.10.80:5000
+2025-08-05 15:28:12,913 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2025-08-05 15:28:14,104 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-05 15:28:14,789 - websocket - INFO - Websocket connected
+2025-08-05 15:28:14,789 - OrderbookCollector - INFO - Orderbook websocket connection established for BTCUSDT
+2025-08-05 15:28:14,856 - websocket - INFO - Websocket connected
+2025-08-05 15:28:14,856 - TickCollector - INFO - Websocket connection established
+2025-08-05 15:28:16,702 - SentimentCollector - INFO - Collected sentiment data from alternative: neutral (index: 60)
+2025-08-05 15:28:19,386 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-05 15:28:24,287 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:24] "GET / HTTP/1.1" 200 -
+2025-08-05 15:28:24,626 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-05 15:28:27,592 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:27] "GET /api/status HTTP/1.1" 200 -
+2025-08-05 15:28:27,593 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:27] "GET /api/plot?timeframe=5m HTTP/1.1" 200 -
+2025-08-05 15:28:27,594 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:27] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-05 15:28:27,595 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:27] "GET /api/performance HTTP/1.1" 200 -
+2025-08-05 15:28:27,597 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:27] "GET /api/signals HTTP/1.1" 200 -
+2025-08-05 15:28:27,600 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:27] "GET /api/model-stats HTTP/1.1" 200 -
+2025-08-05 15:28:27,601 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:27] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-05 15:28:27,604 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:27] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2025-08-05 15:28:29,717 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-05 15:28:32,594 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:32] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-05 15:28:32,595 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:32] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-05 15:28:34,792 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-05 15:28:37,595 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:37] "GET /api/status HTTP/1.1" 200 -
+2025-08-05 15:28:37,595 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:37] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-05 15:28:37,598 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:37] "GET /api/signals HTTP/1.1" 200 -
+2025-08-05 15:28:37,600 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:37] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-05 15:28:39,851 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-05 15:28:42,594 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:42] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-05 15:28:42,597 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:42] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-05 15:28:44,913 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-05 15:28:47,594 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:47] "GET /api/status HTTP/1.1" 200 -
+2025-08-05 15:28:47,594 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:47] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-05 15:28:47,596 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:47] "GET /api/signals HTTP/1.1" 200 -
+2025-08-05 15:28:47,598 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:47] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-05 15:28:49,960 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-05 15:28:52,594 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:52] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-05 15:28:52,597 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:52] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-05 15:28:55,003 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-05 15:28:57,596 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:57] "GET /api/status HTTP/1.1" 200 -
+2025-08-05 15:28:57,597 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:57] "GET /api/performance HTTP/1.1" 200 -
+2025-08-05 15:28:57,597 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:57] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-05 15:28:57,599 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:57] "GET /api/plot?timeframe=5m HTTP/1.1" 200 -
+2025-08-05 15:28:57,602 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:57] "GET /api/signals HTTP/1.1" 200 -
+2025-08-05 15:28:57,603 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:57] "GET /api/model-stats HTTP/1.1" 200 -
+2025-08-05 15:28:57,605 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:28:57] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-05 15:29:00,043 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-05 15:29:03,257 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:03] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-05 15:29:03,260 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:03] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-05 15:29:05,106 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-05 15:29:08,261 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:08] "GET /api/status HTTP/1.1" 200 -
+2025-08-05 15:29:08,261 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:08] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-05 15:29:08,261 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:08] "GET /api/signals HTTP/1.1" 200 -
+2025-08-05 15:29:08,261 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:08] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-05 15:29:22,007 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:22] "GET /api/status HTTP/1.1" 200 -
+2025-08-05 15:29:22,007 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:22] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-05 15:29:22,007 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:22] "GET /api/signals HTTP/1.1" 200 -
+2025-08-05 15:29:22,007 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:22] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-05 15:29:22,022 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:22] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-05 15:29:22,022 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:22] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-05 15:29:23,262 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:23] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-05 15:29:23,262 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:23] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-05 15:29:27,097 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-05 15:29:28,266 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:28] "GET /api/status HTTP/1.1" 200 -
+2025-08-05 15:29:28,266 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:28] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-05 15:29:28,266 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:28] "GET /api/performance HTTP/1.1" 200 -
+2025-08-05 15:29:28,266 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:28] "GET /api/plot?timeframe=5m HTTP/1.1" 200 -
+2025-08-05 15:29:28,266 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:28] "GET /api/signals HTTP/1.1" 200 -
+2025-08-05 15:29:28,266 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:28] "GET /api/model-stats HTTP/1.1" 200 -
+2025-08-05 15:29:28,266 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:28] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-05 15:29:32,126 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-05 15:29:33,262 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:33] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-05 15:29:33,262 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:33] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-05 15:29:37,169 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-05 15:29:38,255 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:38] "GET /api/status HTTP/1.1" 200 -
+2025-08-05 15:29:38,255 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:38] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-05 15:29:38,255 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:38] "GET /api/signals HTTP/1.1" 200 -
+2025-08-05 15:29:38,255 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:38] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-05 15:29:42,216 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-05 15:29:43,263 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:43] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-05 15:29:43,263 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:43] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-05 15:29:47,275 - SignalGenerator - ERROR - Error generating signal: too many indices for tensor of dimension 2
+2025-08-05 15:29:48,257 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:48] "GET /api/status HTTP/1.1" 200 -
+2025-08-05 15:29:48,258 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:48] "GET /api/portfolio HTTP/1.1" 200 -
+2025-08-05 15:29:48,260 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:48] "GET /api/signals HTTP/1.1" 200 -
+2025-08-05 15:29:48,262 - werkzeug - INFO - 192.168.10.80 - - [05/Aug/2025 15:29:48] "GET /api/active-features HTTP/1.1" 200 -
+2025-08-05 15:29:51,919 - Main - INFO - Stopping bot due to keyboard interrupt
+2025-08-05 15:29:51,919 - Main - INFO - Stopping trading bot...
+2025-08-05 15:29:51,965 - TickCollector - INFO - Websocket closed: None (code: None)
+2025-08-05 15:29:52,387 - TickCollector - INFO - Tick collector stopped
+2025-08-05 15:29:52,387 - Main - INFO - Stopped tick collector
+2025-08-05 15:29:52,387 - SentimentCollector - INFO - Sentiment collector stopped
+2025-08-05 15:29:52,387 - Main - INFO - Stopped sentiment collector
+2025-08-05 15:29:52,434 - OrderbookCollector - INFO - Orderbook websocket closed for BTCUSDT: None (code: None)
+2025-08-05 15:29:52,919 - OrderbookCollector - INFO - Orderbook collector stopped
+2025-08-05 15:29:52,919 - Main - INFO - Stopped orderbook collector
+2025-08-05 15:29:52,919 - NeuralNetwork - INFO - Online learner stopped
+2025-08-05 15:29:52,919 - Main - INFO - Stopped online learner
+2025-08-05 15:29:52,919 - TradeExecutor - INFO - Trade executor stopped
+2025-08-05 15:29:52,919 - Main - INFO - Stopped trade executor
+2025-08-05 15:29:52,919 - Main - INFO - Trading bot stopped

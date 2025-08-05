@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Trading Bot Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+        }
+        .navbar {
+            background-color: #343a40;
+        }
+        .card {
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+        .card-header {
+            font-weight: bold;
+            background-color: #f8f9fa;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        .status-online {
+            background-color: #28a745;
+        }
+        .status-offline {
+            background-color: #dc3545;
+        }
+        .status-warning {
+            background-color: #ffc107;
+        }
+        .chart-container {
+            width: 100%;
+            height: 500px;
+        }
+        .metric {
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .metric-label {
+            font-size: 14px;
+            color: #6c757d;
+        }
+        .positive {
+            color: #28a745;
+        }
+        .negative {
+            color: #dc3545;
+        }
+        .neutral {
+            color: #6c757d;
+        }
+        .signal-buy {
+            background-color: rgba(40, 167, 69, 0.2);
+        }
+        .signal-sell {
+            background-color: rgba(220, 53, 69, 0.2);
+        }
+        .signal-hold {
+            background-color: rgba(108, 117, 125, 0.1);
+        }
+        .refresh-btn {
+            cursor: pointer;
+            transition: transform 0.3s;
+        }
+        .refresh-btn:hover {
+            transform: rotate(180deg);
+        }
+        /* Feature Indicator Styling */
+        .feature-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 5px;
+            animation-duration: 2s;
+            animation-iteration-count: infinite;
+        }
+        .feature-active {
+            background-color: #28a745;
+            animation-name: pulse-green;
+        }
+        .feature-inactive {
+            background-color: #dc3545;
+        }
+        @keyframes pulse-green {
+            0% {
+                box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7);
+            }
+            70% {
+                box-shadow: 0 0 0 10px rgba(40, 167, 69, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(40, 167, 69, 0);
+            }
+        }
+        .feature-weight {
+            display: inline-block;
+            width: 80px;
+            height: 8px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-left: 10px;
+        }
+        .feature-weight-bar {
+            height: 100%;
+            background-color: #28a745;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark mb-4">
+        <div class="container">
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-robot me-2"></i>AI Trading Bot
+            </a>
+            <div class="d-flex align-items-center">
+                <span class="text-light me-3">
+                    <span class="status-indicator" id="status-dot"></span>
+                    <span id="status-text">Checking status...</span>
+                </span>
+                <button class="btn btn-outline-light" id="control-btn">Start</button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="row">
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        Portfolio
+                        <i class="fas fa-sync refresh-btn" onclick="refreshPortfolio()"></i>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <div class="metric" id="balance">$0.00</div>
+                            <div class="metric-label">Balance</div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="metric" id="equity">$0.00</div>
+                            <div class="metric-label">Equity</div>
+                        </div>
+                        <hr>
+                        <div id="positions-container">
+                            <p class="text-muted">No open positions</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        Performance
+                        <i class="fas fa-sync refresh-btn" onclick="refreshPerformance()"></i>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-6 mb-3">
+                                <div class="metric" id="daily-return">0.00%</div>
+                                <div class="metric-label">Daily</div>
+                            </div>
+                            <div class="col-6 mb-3">
+                                <div class="metric" id="weekly-return">0.00%</div>
+                                <div class="metric-label">Weekly</div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-6 mb-3">
+                                <div class="metric" id="monthly-return">0.00%</div>
+                                <div class="metric-label">Monthly</div>
+                            </div>
+                            <div class="col-6 mb-3">
+                                <div class="metric" id="all-time-return">0.00%</div>
+                                <div class="metric-label">All-time</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- New card for Active Features -->
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        Active Features
+                        <i class="fas fa-sync refresh-btn" onclick="refreshActiveFeatures()"></i>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="list-group list-group-flush" id="active-features-list">
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <span>Loading features...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-9">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        Price Chart
+                        <div>
+                            <select class="form-select form-select-sm d-inline-block w-auto me-2" id="timeframe-select">
+                                <option value="1m">1m</option>
+                                <option value="5m" selected>5m</option>
+                                <option value="15m">15m</option>
+                                <option value="30m">30m</option>
+                                <option value="1h">1h</option>
+                                <option value="4h">4h</option>
+                                <option value="1d">1d</option>
+                            </select>
+                            <i class="fas fa-sync refresh-btn" onclick="refreshChart()"></i>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="chart" class="chart-container"></div>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                Recent Signals
+                                <i class="fas fa-sync refresh-btn" onclick="refreshSignals()"></i>
+                            </div>
+                            <div class="card-body p-0">
+                                <div class="table-responsive">
+                                    <table class="table table-hover mb-0">
+                                        <thead>
+                                            <tr>
+                                                <th>Time</th>
+                                                <th>Signal</th>
+                                                <th>Price</th>
+                                                <th>Conf.</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="signals-table-body">
+                                            <tr>
+                                                <td colspan="4" class="text-center">No signals yet</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                Model Stats
+                                <i class="fas fa-sync refresh-btn" onclick="refreshModelStats()"></i>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <strong>Market Regime:</strong> 
+                                    <span id="market-regime">Neutral</span>
+                                </div>
+                                <div class="mb-3">
+                                    <strong>Feature Importance:</strong>
+                                    <div class="progress mb-1">
+                                        <div class="progress-bar bg-primary" id="ohlcv-importance" role="progressbar" style="width: 25%">OHLCV</div>
+                                    </div>
+                                    <div class="progress mb-1">
+                                        <div class="progress-bar bg-success" id="indicator-importance" role="progressbar" style="width: 25%">Indicators</div>
+                                    </div>
+                                    <div class="progress mb-1">
+                                        <div class="progress-bar bg-warning" id="sentiment-importance" role="progressbar" style="width: 25%">Sentiment</div>
+                                    </div>
+                                    <div class="progress mb-1">
+                                        <div class="progress-bar bg-info" id="orderbook-importance" role="progressbar" style="width: 25%">OrderBook</div>
+                                    </div>
+                                </div>
+                                <div id="update-counts">
+                                    <strong>Model Updates:</strong>
+                                    <div>No update data available</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row mt-3">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        Settings
+                        <i class="fas fa-sync refresh-btn" onclick="refreshSettings()"></i>
+                    </div>
+                    <div class="card-body">
+                        <form id="settings-form" class="row">
+                            <div class="col-md-4 mb-3">
+                                <label for="symbol" class="form-label">Symbol</label>
+                                <input type="text" class="form-control" id="symbol" name="symbol" value="{{ settings.symbol }}">
+                            </div>
+                            <div class="col-md-2 mb-3">
+                                <label for="timeframe" class="form-label">Timeframe</label>
+                                <select class="form-select" id="timeframe" name="timeframe">
+                                    <option value="1m" {% if settings.timeframe == '1m' %}selected{% endif %}>1m</option>
+                                    <option value="5m" {% if settings.timeframe == '5m' %}selected{% endif %}>5m</option>
+                                    <option value="15m" {% if settings.timeframe == '15m' %}selected{% endif %}>15m</option>
+                                    <option value="30m" {% if settings.timeframe == '30m' %}selected{% endif %}>30m</option>
+                                    <option value="1h" {% if settings.timeframe == '1h' %}selected{% endif %}>1h</option>
+                                    <option value="4h" {% if settings.timeframe == '4h' %}selected{% endif %}>4h</option>
+                                    <option value="1d" {% if settings.timeframe == '1d' %}selected{% endif %}>1d</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2 mb-3">
+                                <label for="risk" class="form-label">Risk per Trade</label>
+                                <div class="input-group">
+                                    <input type="number" class="form-control" id="risk" name="risk_per_trade" min="0.01" max="0.1" step="0.01" value="{{ settings.risk_per_trade }}">
+                                    <span class="input-group-text">%</span>
+                                </div>
+                            </div>
+                            <div class="col-md-2 mb-3">
+                                <label for="take-profit" class="form-label">Take Profit</label>
+                                <div class="input-group">
+                                    <input type="number" class="form-control" id="take-profit" name="take_profit" min="0.01" step="0.01" value="{{ settings.take_profit }}">
+                                    <span class="input-group-text">%</span>
+                                </div>
+                            </div>
+                            <div class="col-md-2 mb-3">
+                                <label for="stop-loss" class="form-label">Stop Loss</label>
+                                <div class="input-group">
+                                    <input type="number" class="form-control" id="stop-loss" name="stop_loss" min="0.01" step="0.01" value="{{ settings.stop_loss }}">
+                                    <span class="input-group-text">%</span>
+                                </div>
+                            </div>
+                            <div class="col-12">
+                                <button type="submit" class="btn btn-primary">Save Settings</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Update status display
+        function updateStatusDisplay(status) {
+            const statusDot = document.getElementById('status-dot');
+            const statusText = document.getElementById('status-text');
+            const controlBtn = document.getElementById('control-btn');
+            
+            if (status === 'running') {
+                statusDot.className = 'status-indicator status-online';
+                statusText.textContent = 'Online';
+                controlBtn.textContent = 'Stop';
+                controlBtn.className = 'btn btn-outline-danger';
+            } else if (status === 'stopped') {
+                statusDot.className = 'status-indicator status-offline';
+                statusText.textContent = 'Offline';
+                controlBtn.textContent = 'Start';
+                controlBtn.className = 'btn btn-outline-success';
+            } else if (status === 'starting' || status === 'restarting') {
+                statusDot.className = 'status-indicator status-warning';
+                statusText.textContent = 'Starting...';
+                controlBtn.textContent = 'Stop';
+                controlBtn.className = 'btn btn-outline-danger';
+            } else if (status === 'stopping') {
+                statusDot.className = 'status-indicator status-warning';
+                statusText.textContent = 'Stopping...';
+                controlBtn.textContent = 'Start';
+                controlBtn.className = 'btn btn-outline-success';
+            } else {
+                statusDot.className = 'status-indicator status-offline';
+                statusText.textContent = 'Unknown';
+                controlBtn.textContent = 'Start';
+                controlBtn.className = 'btn btn-outline-success';
+            }
+        }
+
+        // Format number as currency
+        function formatCurrency(value) {
+            return new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: 'USD'
+            }).format(value);
+        }
+
+        // Format number as percentage
+        function formatPercentage(value) {
+            return new Intl.NumberFormat('en-US', {
+                style: 'percent',
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            }).format(value / 100);
+        }
+
+        // Add color class based on value
+        function getValueColorClass(value) {
+            if (value > 0) return 'positive';
+            if (value < 0) return 'negative';
+            return 'neutral';
+        }
+
+        // Format date
+        function formatDate(dateStr) {
+            const date = new Date(dateStr);
+            return date.toLocaleString();
+        }
+
+        // Refresh portfolio information
+        function refreshPortfolio() {
+            fetch('/api/portfolio')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('balance').textContent = formatCurrency(data.balance);
+                    document.getElementById('equity').textContent = formatCurrency(data.equity);
+                    
+                    const positionsContainer = document.getElementById('positions-container');
+                    if (data.positions && data.positions.length > 0) {
+                        let html = '<table class="table table-sm"><thead><tr><th>Symbol</th><th>Size</th><th>Entry</th><th>Current</th><th>P/L</th></tr></thead><tbody>';
+                        
+                        data.positions.forEach(pos => {
+                            const profitClass = getValueColorClass(pos.unrealized_pnl);
+                            html += `
+                                <tr>
+                                    <td>${pos.symbol}</td>
+                                    <td>${pos.amount.toFixed(4)}</td>
+                                    <td>${formatCurrency(pos.entry_price)}</td>
+                                    <td>${formatCurrency(pos.current_price)}</td>
+                                    <td class="${profitClass}">${pos.unrealized_pnl.toFixed(2)}%</td>
+                                </tr>
+                            `;
+                        });
+                        
+                        html += '</tbody></table>';
+                        positionsContainer.innerHTML = html;
+                    } else {
+                        positionsContainer.innerHTML = '<p class="text-muted">No open positions</p>';
+                    }
+                })
+                .catch(error => console.error('Error fetching portfolio:', error));
+        }
+
+        // Refresh performance metrics
+        function refreshPerformance() {
+            fetch('/api/performance')
+                .then(response => response.json())
+                .then(data => {
+                    const dailyReturn = document.getElementById('daily-return');
+                    const weeklyReturn = document.getElementById('weekly-return');
+                    const monthlyReturn = document.getElementById('monthly-return');
+                    const allTimeReturn = document.getElementById('all-time-return');
+                    
+                    dailyReturn.textContent = data.daily.toFixed(2) + '%';
+                    dailyReturn.className = 'metric ' + getValueColorClass(data.daily);
+                    
+                    weeklyReturn.textContent = data.weekly.toFixed(2) + '%';
+                    weeklyReturn.className = 'metric ' + getValueColorClass(data.weekly);
+                    
+                    monthlyReturn.textContent = data.monthly.toFixed(2) + '%';
+                    monthlyReturn.className = 'metric ' + getValueColorClass(data.monthly);
+                    
+                    allTimeReturn.textContent = data.all_time.toFixed(2) + '%';
+                    allTimeReturn.className = 'metric ' + getValueColorClass(data.all_time);
+                })
+                .catch(error => console.error('Error fetching performance:', error));
+        }
+
+        // Refresh active features
+        function refreshActiveFeatures() {
+            fetch('/api/active-features')
+                .then(response => response.json())
+                .then(data => {
+                    const featuresList = document.getElementById('active-features-list');
+                    let html = '';
+                    
+                    // Add OHLCV
+                    if (data.ohlcv) {
+                        const isActive = data.ohlcv.active;
+                        const weight = data.ohlcv.weight * 100;
+                        html += `
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <span class="feature-indicator ${isActive ? 'feature-active' : 'feature-inactive'}"></span>
+                                    OHLCV
+                                </div>
+                                <div class="feature-weight">
+                                    <div class="feature-weight-bar" style="width: ${weight}%"></div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                    
+                    // Add Indicators
+                    if (data.indicators) {
+                        Object.entries(data.indicators).forEach(([name, info]) => {
+                            const isActive = info.active;
+                            const weight = info.weight * 100;
+                            html += `
+                                <div class="list-group-item d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <span class="feature-indicator ${isActive ? 'feature-active' : 'feature-inactive'}"></span>
+                                        ${name.toUpperCase()}
+                                    </div>
+                                    <div class="feature-weight">
+                                        <div class="feature-weight-bar" style="width: ${weight}%"></div>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                    }
+                    
+                    // Add Sentiment
+                    if (data.sentiment) {
+                        const isActive = data.sentiment.active;
+                        const weight = data.sentiment.weight * 100;
+                        html += `
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <span class="feature-indicator ${isActive ? 'feature-active' : 'feature-inactive'}"></span>
+                                    Sentiment
+                                </div>
+                                <div class="feature-weight">
+                                    <div class="feature-weight-bar" style="width: ${weight}%"></div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                    
+                    // Add OrderBook
+                    if (data.orderbook) {
+                        const isActive = data.orderbook.active;
+                        const weight = data.orderbook.weight * 100;
+                        html += `
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <span class="feature-indicator ${isActive ? 'feature-active' : 'feature-inactive'}"></span>
+                                    OrderBook
+                                </div>
+                                <div class="feature-weight">
+                                    <div class="feature-weight-bar" style="width: ${weight}%"></div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                    
+                    // Add Tick Data
+                    if (data.tick_data) {
+                        const isActive = data.tick_data.active;
+                        const weight = data.tick_data.weight * 100;
+                        html += `
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <span class="feature-indicator ${isActive ? 'feature-active' : 'feature-inactive'}"></span>
+                                    Tick Data
+                                </div>
+                                <div class="feature-weight">
+                                    <div class="feature-weight-bar" style="width: ${weight}%"></div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                    
+                    featuresList.innerHTML = html || '<div class="list-group-item">No features available</div>';
+                })
+                .catch(error => console.error('Error fetching active features:', error));
+        }
+
+        // Refresh chart
+        function refreshChart() {
+            const timeframe = document.getElementById('timeframe-select').value;
+            
+            fetch('/api/plot?timeframe=' + timeframe)
+                .then(response => response.json())
+                .then(data => {
+                    Plotly.react('chart', data);
+                })
+                .catch(error => console.error('Error fetching chart data:', error));
+        }
+
+        // Refresh signals
+        function refreshSignals() {
+            fetch('/api/signals')
+                .then(response => response.json())
+                .then(data => {
+                    const tableBody = document.getElementById('signals-table-body');
+                    
+                    if (data && data.length > 0) {
+                        let html = '';
+                        
+                        data.forEach(signal => {
+                            const signalClass = 
+                                signal.signal === 'BUY' ? 'signal-buy' :
+                                signal.signal === 'SELL' ? 'signal-sell' : 'signal-hold';
+                                
+                            const confidenceClass = 
+                                signal.confidence >= 0.7 ? 'positive' :
+                                signal.confidence <= 0.3 ? 'negative' : 'neutral';
+                                
+                            html += `
+                                <tr class="${signalClass}">
+                                    <td>${formatDate(signal.timestamp)}</td>
+                                    <td>${signal.signal}</td>
+                                    <td>${formatCurrency(signal.price)}</td>
+                                    <td class="${confidenceClass}">${(signal.confidence * 100).toFixed(1)}%</td>
+                                </tr>
+                            `;
+                        });
+                        
+                        tableBody.innerHTML = html;
+                    } else {
+                        tableBody.innerHTML = '<tr><td colspan="4" class="text-center">No signals yet</td></tr>';
+                    }
+                })
+                .catch(error => console.error('Error fetching signals:', error));
+        }
+        
+        // Refresh model stats
+        function refreshModelStats() {
+            fetch('/api/model-stats')
+                .then(response => response.json())
+                .then(data => {
+                    // Update market regime
+                    const marketRegime = document.getElementById('market-regime');
+                    marketRegime.textContent = data.market_regime.charAt(0).toUpperCase() + data.market_regime.slice(1);
+                    
+                    // Color based on regime
+                    if (data.market_regime === 'bullish') {
+                        marketRegime.className = 'positive';
+                    } else if (data.market_regime === 'bearish') {
+                        marketRegime.className = 'negative';
+                    } else {
+                        marketRegime.className = '';
+                    }
+                    
+                    // Update feature importance
+                    if (data.feature_importance) {
+                        const fi = data.feature_importance;
+                        const total = Object.values(fi).reduce((a, b) => a + b, 0);
+                        
+                        // Update progress bars
+                        if (fi.ohlcv !== undefined) {
+                            const percent = (fi.ohlcv / total * 100).toFixed(1);
+                            document.getElementById('ohlcv-importance').style.width = `${percent}%`;
+                            document.getElementById('ohlcv-importance').textContent = `OHLCV: ${percent}%`;
+                        }
+                        
+                        if (fi.indicator !== undefined) {
+                            const percent = (fi.indicator / total * 100).toFixed(1);
+                            document.getElementById('indicator-importance').style.width = `${percent}%`;
+                            document.getElementById('indicator-importance').textContent = `Indicators: ${percent}%`;
+                        }
+                        
+                        if (fi.sentiment !== undefined) {
+                            const percent = (fi.sentiment / total * 100).toFixed(1);
+                            document.getElementById('sentiment-importance').style.width = `${percent}%`;
+                            document.getElementById('sentiment-importance').textContent = `Sentiment: ${percent}%`;
+                        }
+                        
+                        if (fi.orderbook !== undefined) {
+                            const percent = (fi.orderbook / total * 100).toFixed(1);
+                            document.getElementById('orderbook-importance').style.width = `${percent}%`;
+                            document.getElementById('orderbook-importance').textContent = `OrderBook: ${percent}%`;
+                        }
+                    }
+                    
+                    // Update model update counts
+                    if (data.update_counts) {
+                        const updateCounts = document.getElementById('update-counts');
+                        let html = '<strong>Model Updates:</strong><ul>';
+                        
+                        for (const [model, count] of Object.entries(data.update_counts)) {
+                            html += `<li>${model}: ${count} updates</li>`;
+                        }
+                        
+                        html += '</ul>';
+                        updateCounts.innerHTML = html;
+                    }
+                })
+                .catch(error => console.error('Error fetching model stats:', error));
+        }
+        
+        // Refresh settings
+        function refreshSettings() {
+            fetch('/api/settings')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('symbol').value = data.symbol;
+                    document.getElementById('timeframe').value = data.timeframe;
+                    document.getElementById('risk').value = data.risk_per_trade;
+                    document.getElementById('take-profit').value = data.take_profit;
+                    document.getElementById('stop-loss').value = data.stop_loss;
+                })
+                .catch(error => console.error('Error fetching settings:', error));
+        }
+        
+        // Handle settings form submission
+        document.getElementById('settings-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = {
+                symbol: document.getElementById('symbol').value,
+                timeframe: document.getElementById('timeframe').value,
+                risk_per_trade: parseFloat(document.getElementById('risk').value),
+                take_profit: parseFloat(document.getElementById('take-profit').value),
+                stop_loss: parseFloat(document.getElementById('stop-loss').value)
+            };
+            
+            fetch('/api/settings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(formData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert('Settings updated successfully');
+                    refreshChart();
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error saving settings:', error);
+                alert('Error saving settings');
+            });
+        });
+        
+        // Handle control button
+        document.getElementById('control-btn').addEventListener('click', function() {
+            const currentStatus = this.textContent;
+            const action = currentStatus === 'Start' ? 'start' : 'stop';
+            
+            fetch('/api/control', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ action })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    if (action === 'start') {
+                        updateStatusDisplay('starting');
+                    } else {
+                        updateStatusDisplay('stopping');
+                    }
+                    setTimeout(checkStatus, 2000);
+                } else {
+                    alert(data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error controlling bot:', error);
+                alert('Error controlling bot');
+            });
+        });
+        
+        // Check bot status
+        function checkStatus() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    updateStatusDisplay(data.status);
+                })
+                .catch(error => console.error('Error checking status:', error));
+        }
+        
+        // Initialize page
+        function initPage() {
+            checkStatus();
+            refreshChart();
+            refreshPortfolio();
+            refreshPerformance();
+            refreshSignals();
+            refreshModelStats();
+            refreshActiveFeatures();  // Add this new function call
+            
+            // Set up periodic refreshes
+            setInterval(checkStatus, 10000);            // Check status every 10s
+            setInterval(refreshPortfolio, 5000);        // Refresh portfolio every 5s
+            setInterval(refreshPerformance, 30000);     // Refresh performance every 30s
+            setInterval(refreshChart, 30000);           // Refresh chart every 30s
+            setInterval(refreshSignals, 10000);         // Refresh signals every 10s
+            setInterval(refreshModelStats, 30000);      // Refresh model stats every 30s
+            setInterval(refreshActiveFeatures, 5000);   // Refresh active features every 5s
+        }
+        
+        // Run initialization when page loads
+        window.addEventListener('load', initPage);
+    </script>
+</body>
+</html>
