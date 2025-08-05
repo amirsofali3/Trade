@@ -118,6 +118,37 @@
             height: 100%;
             background-color: #28a745;
         }
+        /* Technical Indicators Styling */
+        .indicator-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            margin-bottom: 5px;
+            border-radius: 5px;
+            background-color: #f8f9fa;
+            border-left: 4px solid #28a745;
+        }
+        .indicator-weak {
+            border-left-color: #dc3545;
+            background-color: #fff5f5;
+        }
+        .indicator-moderate {
+            border-left-color: #ffc107;
+            background-color: #fffbf0;
+        }
+        .indicator-strong {
+            border-left-color: #28a745;
+            background-color: #f0fff4;
+        }
+        .indicator-value {
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+        .indicator-name {
+            font-size: 0.9em;
+            text-transform: uppercase;
+        }
     </style>
 </head>
 <body>
@@ -286,6 +317,25 @@
                                     <strong>Model Updates:</strong>
                                     <div>No update data available</div>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row mt-3">
+            <div class="col-md-12">
+                <!-- New section for Technical Indicators -->
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        Technical Indicators Impact
+                        <i class="fas fa-sync refresh-btn" onclick="refreshTechnicalIndicators()"></i>
+                    </div>
+                    <div class="card-body">
+                        <div class="row" id="technical-indicators-container">
+                            <div class="col-12">
+                                <p class="text-muted">Loading technical indicators...</p>
                             </div>
                         </div>
                     </div>
@@ -474,8 +524,108 @@
                 .catch(error => console.error('Error fetching performance:', error));
         }
 
-        // Refresh active features
-        function refreshActiveFeatures() {
+        // Refresh technical indicators
+        function refreshTechnicalIndicators() {
+            fetch('/api/active-features')
+                .then(response => response.json())
+                .then(data => {
+                    const container = document.getElementById('technical-indicators-container');
+                    let html = '';
+                    
+                    // Process indicators
+                    if (data.indicators) {
+                        let indicatorHtml = '<div class="col-12"><h6>Individual Technical Indicators</h6></div>';
+                        
+                        // Sort indicators by weight (descending)
+                        const sortedIndicators = Object.entries(data.indicators)
+                            .sort(([,a], [,b]) => b.weight - a.weight);
+                        
+                        let colCount = 0;
+                        sortedIndicators.forEach(([name, info]) => {
+                            if (colCount % 3 === 0) {
+                                indicatorHtml += '<div class="w-100"></div>';
+                            }
+                            
+                            const weight = info.weight * 100;
+                            const status = info.status || 'moderate';
+                            const statusClass = `indicator-${status}`;
+                            
+                            indicatorHtml += `
+                                <div class="col-md-4 mb-2">
+                                    <div class="indicator-item ${statusClass}">
+                                        <div class="indicator-name">${name}</div>
+                                        <div class="indicator-value">${weight.toFixed(1)}%</div>
+                                    </div>
+                                </div>
+                            `;
+                            colCount++;
+                        });
+                        
+                        html += indicatorHtml;
+                    }
+                    
+                    // Process candle patterns if available
+                    if (data.candle_patterns) {
+                        let patternHtml = '<div class="col-12 mt-3"><h6>Candlestick Patterns</h6></div>';
+                        
+                        // Sort patterns by weight (descending)
+                        const sortedPatterns = Object.entries(data.candle_patterns)
+                            .sort(([,a], [,b]) => b.weight - a.weight);
+                        
+                        let colCount = 0;
+                        sortedPatterns.forEach(([name, info]) => {
+                            if (colCount % 3 === 0) {
+                                patternHtml += '<div class="w-100"></div>';
+                            }
+                            
+                            const weight = info.weight * 100;
+                            const status = info.status || 'moderate';
+                            const statusClass = `indicator-${status}`;
+                            
+                            patternHtml += `
+                                <div class="col-md-4 mb-2">
+                                    <div class="indicator-item ${statusClass}">
+                                        <div class="indicator-name">${name}</div>
+                                        <div class="indicator-value">${weight.toFixed(1)}%</div>
+                                    </div>
+                                </div>
+                            `;
+                            colCount++;
+                        });
+                        
+                        html += patternHtml;
+                    }
+                    
+                    // Show summary of weak features
+                    let weakCount = 0;
+                    let strongCount = 0;
+                    
+                    // Count features by status
+                    ['indicators', 'candle_patterns'].forEach(groupName => {
+                        if (data[groupName]) {
+                            Object.values(data[groupName]).forEach(info => {
+                                if (info.status === 'weak') weakCount++;
+                                else if (info.status === 'strong') strongCount++;
+                            });
+                        }
+                    });
+                    
+                    if (weakCount > 0 || strongCount > 0) {
+                        html += `
+                            <div class="col-12 mt-3">
+                                <div class="alert alert-info">
+                                    <strong>Feature Summary:</strong> 
+                                    ${strongCount} strong features, 
+                                    ${weakCount} weak features (≤ 1.1% impact)
+                                </div>
+                            </div>
+                        `;
+                    }
+                    
+                    container.innerHTML = html || '<div class="col-12"><p class="text-muted">No technical indicators available</p></div>';
+                })
+                .catch(error => console.error('Error fetching technical indicators:', error));
+        }
             fetch('/api/active-features')
                 .then(response => response.json())
                 .then(data => {
@@ -785,16 +935,18 @@
             refreshPerformance();
             refreshSignals();
             refreshModelStats();
-            refreshActiveFeatures();  // Add this new function call
+            refreshActiveFeatures();
+            refreshTechnicalIndicators();  // Add technical indicators refresh
             
             // Set up periodic refreshes
-            setInterval(checkStatus, 10000);            // Check status every 10s
-            setInterval(refreshPortfolio, 5000);        // Refresh portfolio every 5s
-            setInterval(refreshPerformance, 30000);     // Refresh performance every 30s
-            setInterval(refreshChart, 30000);           // Refresh chart every 30s
-            setInterval(refreshSignals, 10000);         // Refresh signals every 10s
-            setInterval(refreshModelStats, 30000);      // Refresh model stats every 30s
-            setInterval(refreshActiveFeatures, 5000);   // Refresh active features every 5s
+            setInterval(checkStatus, 10000);                    // Check status every 10s
+            setInterval(refreshPortfolio, 5000);                // Refresh portfolio every 5s
+            setInterval(refreshPerformance, 30000);             // Refresh performance every 30s
+            setInterval(refreshChart, 30000);                   // Refresh chart every 30s
+            setInterval(refreshSignals, 10000);                 // Refresh signals every 10s
+            setInterval(refreshModelStats, 30000);              // Refresh model stats every 30s
+            setInterval(refreshActiveFeatures, 5000);           // Refresh active features every 5s
+            setInterval(refreshTechnicalIndicators, 5000);      // Refresh technical indicators every 5s
         }
         
         // Run initialization when page loads
