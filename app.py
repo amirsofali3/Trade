@@ -143,6 +143,17 @@ def chart_data():
     
     return jsonify(chart_data)
 
+@app.route('/api/learning-stats')
+def learning_stats():
+    """Return learning system statistics"""
+    return jsonify(data_store.get('learning_stats', {
+        'total_trades': 0,
+        'success_rate': 0.0,
+        'net_profit': 0.0,
+        'model_updates': 0,
+        'feature_performance': {}
+    }))
+
 @app.route('/api/model-stats')
 def model_stats():
     """Return model statistics"""

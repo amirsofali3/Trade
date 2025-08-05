@@ -319,10 +319,14 @@ class TradingBot:
                 
                 # Process signal with position and risk management
                 if signal:
-                    self._process_signal(signal, current_price, data)
+                    self._process_signal(signal, current_price, data, gated_features, active_features)
                 
                 # Check for position management (stop loss, take profit adjustments)
-                self._manage_positions(current_price)
+                closed_positions = self._manage_positions(current_price)
+                
+                # Update learning system with trade outcomes
+                if closed_positions:
+                    self._update_learning_from_outcomes(closed_positions)
                 
                 # Save active features to database
                 self.db_manager.update_active_features(active_features)
@@ -337,7 +341,7 @@ class TradingBot:
                 logger.error(f"Error in main loop: {str(e)}")
                 time.sleep(10)  # Wait longer on error
     
-    def _process_signal(self, signal, current_price, data):
+    def _process_signal(self, signal, current_price, data, gated_features=None, active_features=None):
         """
         Process a trading signal with position and risk management
         
@@ -345,10 +349,36 @@ class TradingBot:
             signal: Signal dictionary
             current_price: Current market price
             data: Data dictionary
+            gated_features: Gated features used for this signal
+            active_features: Active features information
         """
         try:
             symbol = signal['symbol']
             signal_type = signal['signal_type']
+            confidence = signal.get('confidence', 0.5)
+            
+            # Store signal for learning (regardless of execution)
+            if gated_features and active_features:
+                # Convert signal type to label
+                label = {'BUY': 0, 'SELL': 1, 'HOLD': 2}.get(signal_type, 2)
+                
+                # Calculate feature contributions
+                feature_contributions = {}
+                for group_name, group_data in active_features.items():
+                    if isinstance(group_data, dict) and 'weight' in group_data:
+                        feature_contributions[group_name] = group_data['weight']
+                    elif isinstance(group_data, dict):
+                        for feature_name, feature_info in group_data.items():
+                            if isinstance(feature_info, dict) and 'weight' in feature_info:
+                                feature_contributions[f"{group_name}.{feature_name}"] = feature_info['weight']
+                
+                # Add to learning buffer
+                self.learner.add_experience(
+                    features=gated_features,
+                    label=label,
+                    confidence=confidence,
+                    feature_contributions=feature_contributions
+                )
             
             if signal_type == 'BUY':
                 # Check if we already have a position
@@ -389,7 +419,7 @@ class TradingBot:
                     signal.get('id')
                 )
                 
-                logger.info(f"Processed BUY signal for {symbol} at {entry_price}")
+                logger.info(f"Processed BUY signal for {symbol} at {entry_price} (confidence: {confidence:.2f})")
                 
             elif signal_type == 'SELL':
                 # Check if we have a position to sell
@@ -400,9 +430,19 @@ class TradingBot:
                     return
                 
                 # Remove position from position manager
-                self.position_manager.remove_position(symbol)
+                closed_position = self.position_manager.remove_position(symbol)
                 
-                logger.info(f"Processed SELL signal for {symbol} at {current_price}")
+                # Calculate P&L for learning
+                if closed_position:
+                    entry_price = closed_position['entry_price']
+                    pnl_percent = (current_price - entry_price) / entry_price
+                    
+                    # This will be used by learning system
+                    closed_position['exit_price'] = current_price
+                    closed_position['pnl_percent'] = pnl_percent
+                    closed_position['exit_reason'] = 'signal'
+                
+                logger.info(f"Processed SELL signal for {symbol} at {current_price} (confidence: {confidence:.2f})")
             
         except Exception as e:
             logger.error(f"Error processing signal: {str(e)}")
@@ -413,7 +453,12 @@ class TradingBot:
         
         Args:
             current_price: Current market price
+            
+        Returns:
+            List of closed positions for learning feedback
         """
+        closed_positions = []
+        
         try:
             # Get all positions
             positions = self.position_manager.get_all_positions()
@@ -426,7 +471,16 @@ class TradingBot:
                 
                 if action == 'stop_loss':
                     # Close position due to stop loss
-                    self.position_manager.remove_position(symbol)
+                    closed_position = self.position_manager.remove_position(symbol)
+                    
+                    if closed_position:
+                        entry_price = closed_position['entry_price']
+                        pnl_percent = (current_price - entry_price) / entry_price
+                        
+                        closed_position['exit_price'] = current_price
+                        closed_position['pnl_percent'] = pnl_percent
+                        closed_position['exit_reason'] = 'stop_loss'
+                        closed_positions.append(closed_position)
                     
                     # Log the event
                     logger.info(f"Stop loss triggered for {symbol} at {current_price}")
@@ -439,6 +493,42 @@ class TradingBot:
         
         except Exception as e:
             logger.error(f"Error managing positions: {str(e)}")
+        
+        return closed_positions
+    
+    def _update_learning_from_outcomes(self, closed_positions):
+        """
+        Update learning system with trade outcomes
+        
+        Args:
+            closed_positions: List of closed position dictionaries
+        """
+        try:
+            for position in closed_positions:
+                pnl_percent = position.get('pnl_percent', 0)
+                exit_reason = position.get('exit_reason', 'unknown')
+                
+                # Define success criteria
+                was_successful = pnl_percent > 0.01  # More than 1% profit
+                
+                # Find the corresponding experience in learning buffer
+                # This is a simplified approach - in a real system you'd want better tracking
+                signal_id = position.get('signal_id')
+                if signal_id and len(self.learner.experience_buffer['labels']) > 0:
+                    # Update the most recent BUY experience (simplified)
+                    # In a more sophisticated system, you'd match by signal_id
+                    for i in range(len(self.learner.experience_buffer['labels']) - 1, -1, -1):
+                        if (self.learner.experience_buffer['labels'][i] == 0 and  # BUY signal
+                            self.learner.experience_buffer['outcomes'][i] is None):  # No outcome yet
+                            
+                            self.learner.update_trade_outcome(i, pnl_percent, was_successful)
+                            break
+                
+                logger.info(f"Learning update: Position closed with {pnl_percent*100:.2f}% P&L, "
+                           f"Success: {'Yes' if was_successful else 'No'}, Reason: {exit_reason}")
+        
+        except Exception as e:
+            logger.error(f"Error updating learning from outcomes: {str(e)}")
     
     def _start_web_interface(self):
         """Start Flask web interface"""
@@ -605,6 +695,10 @@ class TradingBot:
         app.data_store['system_stats'] = system_stats
         app.data_store['model_stats'] = model_stats
         app.data_store['active_features'] = active_features
+        
+        # Add learning statistics
+        learning_summary = self.learner.get_learning_summary()
+        app.data_store['learning_stats'] = learning_summary
     
     def _calculate_performance(self):
         """Calculate performance metrics"""
