@@ -155,6 +155,7 @@ class TradingBot:
         # Online learner
         self.learner = OnlineLearner(
             model=self.model,
+            gating_module=self.gating,  # Pass gating module for feedback
             lr=model_config.get('learning_rate', 1e-4),
             buffer_size=1000,
             batch_size=32,

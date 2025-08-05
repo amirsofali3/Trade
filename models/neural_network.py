@@ -177,17 +177,24 @@ class MarketTransformer(nn.Module):
 
 class OnlineLearner:
     """
-    Online learning mechanism for continually training the model
+    Enhanced online learning mechanism with trade outcome feedback
+    
+    Features:
+    - Learns from trade outcomes (profit/loss, accuracy)
+    - Adjusts feature weights based on success rates
+    - Implements continuous model improvement
+    - Saves learning progress for recovery
     """
     
-    def __init__(self, model, optimizer_cls=torch.optim.Adam, 
+    def __init__(self, model, gating_module=None, optimizer_cls=torch.optim.Adam, 
                 lr=1e-4, buffer_size=1000, batch_size=32,
                 update_interval=3600, save_dir='saved_models'):
         """
-        Initialize online learner
+        Initialize enhanced online learner
         
         Args:
             model: Neural network model
+            gating_module: Feature gating module for feedback
             optimizer_cls: Optimizer class
             lr: Learning rate
             buffer_size: Maximum size of experience buffer
@@ -196,22 +203,36 @@ class OnlineLearner:
             save_dir: Directory to save model checkpoints
         """
         self.model = model
+        self.gating_module = gating_module
         self.optimizer = optimizer_cls(model.parameters(), lr=lr)
         self.buffer_size = buffer_size
         self.batch_size = batch_size
         self.update_interval = update_interval
         self.save_dir = save_dir
         
-        # Create experience buffer
+        # Create experience buffer with enhanced data
         self.experience_buffer = {
             'features': [],
             'labels': [],
-            'timestamps': []
+            'timestamps': [],
+            'confidences': [],
+            'outcomes': [],  # Actual trade outcomes (profit/loss)
+            'feature_contributions': []  # Which features contributed to decision
+        }
+        
+        # Trade outcome tracking for learning
+        self.trade_outcomes = {
+            'successful_trades': 0,
+            'failed_trades': 0,
+            'total_profit': 0.0,
+            'total_loss': 0.0,
+            'feature_success_rates': {}
         }
         
         # Statistics
         self.updates_counter = 0
         self.last_update_time = datetime.now()
+        self.learning_rate_schedule = lr
         
         # Make sure save directory exists
         if not os.path.exists(save_dir):
@@ -221,7 +242,8 @@ class OnlineLearner:
         self.running = False
         self.update_thread = None
         
-        logger.info(f"Initialized OnlineLearner with buffer_size={buffer_size}, batch_size={batch_size}")
+        logger.info(f"Initialized Enhanced OnlineLearner with feedback learning")
+        logger.info(f"Buffer size: {buffer_size}, Batch size: {batch_size}, Update interval: {update_interval}s")
     
     def start(self):
         """Start the online learning process"""
@@ -243,13 +265,15 @@ class OnlineLearner:
         self.running = False
         logger.info("Online learner stopped")
     
-    def add_experience(self, features, label):
+    def add_experience(self, features, label, confidence=None, feature_contributions=None):
         """
-        Add experience to buffer
+        Add experience to buffer with enhanced data
         
         Args:
             features: Dictionary with feature tensors
             label: Ground truth label (0=buy, 1=sell, 2=hold)
+            confidence: Model confidence for this prediction
+            feature_contributions: Dictionary showing which features contributed most
         """
         try:
             # Convert tensors to numpy arrays for storage
@@ -261,16 +285,103 @@ class OnlineLearner:
             self.experience_buffer['features'].append(features_numpy)
             self.experience_buffer['labels'].append(label)
             self.experience_buffer['timestamps'].append(datetime.now())
+            self.experience_buffer['confidences'].append(confidence if confidence is not None else 0.5)
+            self.experience_buffer['outcomes'].append(None)  # Will be updated when trade completes
+            self.experience_buffer['feature_contributions'].append(feature_contributions)
             
             # Remove oldest experiences if buffer is full
             if len(self.experience_buffer['labels']) > self.buffer_size:
-                self.experience_buffer['features'].pop(0)
-                self.experience_buffer['labels'].pop(0)
-                self.experience_buffer['timestamps'].pop(0)
+                for key in self.experience_buffer:
+                    self.experience_buffer[key].pop(0)
             
             logger.debug(f"Added experience to buffer (size: {len(self.experience_buffer['labels'])})")
         except Exception as e:
             logger.error(f"Error adding experience to buffer: {str(e)}")
+    
+    def update_trade_outcome(self, experience_index, profit_loss, was_successful):
+        """
+        Update trade outcome for learning from results
+        
+        Args:
+            experience_index: Index of experience in buffer (or use timestamp matching)
+            profit_loss: Actual profit/loss from trade
+            was_successful: Boolean indicating if trade was successful
+        """
+        try:
+            if 0 <= experience_index < len(self.experience_buffer['outcomes']):
+                # Update outcome
+                self.experience_buffer['outcomes'][experience_index] = {
+                    'profit_loss': profit_loss,
+                    'successful': was_successful
+                }
+                
+                # Update global statistics
+                if was_successful:
+                    self.trade_outcomes['successful_trades'] += 1
+                    self.trade_outcomes['total_profit'] += max(0, profit_loss)
+                else:
+                    self.trade_outcomes['failed_trades'] += 1
+                    self.trade_outcomes['total_loss'] += abs(min(0, profit_loss))  
+                
+                # Update feature success rates if we have contribution data
+                contributions = self.experience_buffer['feature_contributions'][experience_index]
+                if contributions:
+                    for feature_name, contribution in contributions.items():
+                        if feature_name not in self.trade_outcomes['feature_success_rates']:
+                            self.trade_outcomes['feature_success_rates'][feature_name] = {
+                                'successful': 0, 'total': 0, 'avg_contribution': 0.0
+                            }
+                        
+                        rates = self.trade_outcomes['feature_success_rates'][feature_name]
+                        rates['total'] += 1
+                        if was_successful:
+                            rates['successful'] += 1
+                        
+                        # Update average contribution with exponential moving average
+                        rates['avg_contribution'] = 0.9 * rates['avg_contribution'] + 0.1 * contribution
+                
+                # Update gating module if available
+                if self.gating_module and contributions:
+                    for feature_name, contribution in contributions.items():
+                        self.gating_module.update_feature_performance(
+                            feature_name, was_successful, contribution
+                        )
+                
+                logger.info(f"Updated trade outcome: {'Success' if was_successful else 'Failure'}, P&L: {profit_loss:.4f}")
+            
+        except Exception as e:
+            logger.error(f"Error updating trade outcome: {str(e)}")
+    
+    def get_learning_summary(self):
+        """
+        Get summary of learning progress
+        
+        Returns:
+            Dictionary with learning statistics
+        """
+        total_trades = self.trade_outcomes['successful_trades'] + self.trade_outcomes['failed_trades']
+        success_rate = (self.trade_outcomes['successful_trades'] / total_trades) if total_trades > 0 else 0.0
+        
+        # Calculate feature performance
+        feature_performance = {}
+        for feature_name, rates in self.trade_outcomes['feature_success_rates'].items():
+            if rates['total'] > 0:
+                feature_performance[feature_name] = {
+                    'success_rate': rates['successful'] / rates['total'],
+                    'avg_contribution': rates['avg_contribution'],
+                    'total_trades': rates['total']
+                }
+        
+        return {
+            'total_trades': total_trades,
+            'success_rate': success_rate,
+            'total_profit': self.trade_outcomes['total_profit'],
+            'total_loss': self.trade_outcomes['total_loss'],
+            'net_profit': self.trade_outcomes['total_profit'] - self.trade_outcomes['total_loss'],
+            'model_updates': self.updates_counter,
+            'buffer_size': len(self.experience_buffer['labels']),
+            'feature_performance': feature_performance
+        }
     
     def _update_loop(self):
         """Main update loop"""
@@ -291,21 +402,37 @@ class OnlineLearner:
                 time.sleep(10)
     
     def _perform_update(self):
-        """Perform model update"""
+        """Perform enhanced model update with trade outcome weighting"""
         try:
             # Check if we have enough data
             if len(self.experience_buffer['labels']) < self.batch_size:
                 logger.warning("Not enough data for update")
                 return
             
-            # Sample batch
-            batch_indices = np.random.choice(len(self.experience_buffer['labels']), 
-                                        size=self.batch_size, 
-                                        replace=False)
+            # Sample batch with preference for experiences with known outcomes
+            indices_with_outcomes = [i for i, outcome in enumerate(self.experience_buffer['outcomes']) if outcome is not None]
+            indices_without_outcomes = [i for i, outcome in enumerate(self.experience_buffer['outcomes']) if outcome is None]
+            
+            # Prefer samples with outcomes for learning
+            if len(indices_with_outcomes) >= self.batch_size // 2:
+                # Use half with outcomes, half without
+                n_with_outcomes = min(len(indices_with_outcomes), self.batch_size // 2)
+                n_without_outcomes = self.batch_size - n_with_outcomes
+                
+                batch_indices = (
+                    np.random.choice(indices_with_outcomes, size=n_with_outcomes, replace=False).tolist() +
+                    np.random.choice(indices_without_outcomes, size=n_without_outcomes, replace=False).tolist()
+                )
+            else:
+                # Sample normally if not enough outcome data
+                batch_indices = np.random.choice(len(self.experience_buffer['labels']), 
+                                            size=self.batch_size, 
+                                            replace=False)
             
             # Prepare batch
             batch_features = {}
             batch_labels = []
+            batch_weights = []  # Weight samples based on outcomes
             
             for idx in batch_indices:
                 # Convert numpy back to tensors
@@ -316,6 +443,19 @@ class OnlineLearner:
                     batch_features[name].append(torch.tensor(arr))
                 
                 batch_labels.append(self.experience_buffer['labels'][idx])
+                
+                # Calculate sample weight based on outcome
+                outcome = self.experience_buffer['outcomes'][idx]
+                if outcome is not None:
+                    # Weight successful trades more heavily
+                    if outcome['successful']:
+                        weight = 1.0 + abs(outcome['profit_loss']) * 10  # Boost successful trades
+                    else:
+                        weight = 0.5 + abs(outcome['profit_loss']) * 5   # Reduce failed trades but keep for learning
+                else:
+                    weight = 1.0  # Default weight for unknown outcomes
+                
+                batch_weights.append(weight)
             
             # Stack tensors
             for name in batch_features:
@@ -327,6 +467,7 @@ class OnlineLearner:
                     batch_features[name] = batch_features[name][0].unsqueeze(0)
             
             batch_labels = torch.tensor(batch_labels)
+            batch_weights = torch.tensor(batch_weights, dtype=torch.float32)
             
             # Train model
             self.model.train()
@@ -335,11 +476,12 @@ class OnlineLearner:
             # Forward pass
             logits, _ = self.model(batch_features)
             
-            # Calculate loss
-            loss = F.cross_entropy(logits, batch_labels)
+            # Calculate weighted loss
+            loss = F.cross_entropy(logits, batch_labels, reduction='none')
+            weighted_loss = torch.mean(loss * batch_weights)
             
             # Backward pass
-            loss.backward()
+            weighted_loss.backward()
             
             # Clip gradients
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
@@ -350,36 +492,65 @@ class OnlineLearner:
             # Update statistics
             self.updates_counter += 1
             
+            # Adaptive learning rate based on performance
+            success_rate = self.trade_outcomes['successful_trades'] / max(1, 
+                self.trade_outcomes['successful_trades'] + self.trade_outcomes['failed_trades'])
+            
+            if success_rate > 0.6:
+                # Reduce learning rate when performing well
+                for param_group in self.optimizer.param_groups:
+                    param_group['lr'] = max(param_group['lr'] * 0.99, self.learning_rate_schedule * 0.1)
+            elif success_rate < 0.4:
+                # Increase learning rate when performing poorly
+                for param_group in self.optimizer.param_groups:
+                    param_group['lr'] = min(param_group['lr'] * 1.01, self.learning_rate_schedule * 2.0)
+            
             # Save model periodically
             if self.updates_counter % 10 == 0:
                 self._save_model()
             
-            logger.info(f"Model update performed (updates: {self.updates_counter}, loss: {loss.item():.4f})")
+            logger.info(f"Enhanced model update performed (updates: {self.updates_counter}, "
+                       f"loss: {weighted_loss.item():.4f}, success_rate: {success_rate:.3f})")
         
         except Exception as e:
             logger.error(f"Error performing update: {str(e)}")
     
     def _save_model(self):
-        """Save model checkpoint"""
+        """Save model checkpoint with learning progress"""
         try:
             checkpoint_path = os.path.join(self.save_dir, f"model_checkpoint_{self.updates_counter}.pt")
             
-            # Save model state
-            torch.save({
+            # Save model state with learning data
+            checkpoint_data = {
                 'model_state_dict': self.model.state_dict(),
                 'optimizer_state_dict': self.optimizer.state_dict(),
                 'updates_counter': self.updates_counter,
-                'timestamp': datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-            }, checkpoint_path)
+                'timestamp': datetime.now().strftime('%Y-%m-%d_%H-%M-%S'),
+                'trade_outcomes': self.trade_outcomes,
+                'learning_summary': self.get_learning_summary(),
+                'gating_performance': self.gating_module.get_feature_performance_summary() if self.gating_module else {}
+            }
             
-            logger.info(f"Model saved to {checkpoint_path}")
+            torch.save(checkpoint_data, checkpoint_path)
+            
+            # Keep only the latest 5 checkpoints
+            checkpoint_files = [f for f in os.listdir(self.save_dir) if f.startswith('model_checkpoint_')]
+            if len(checkpoint_files) > 5:
+                checkpoint_files.sort(key=lambda f: int(f.split('_')[-1].split('.')[0]))
+                for old_file in checkpoint_files[:-5]:
+                    try:
+                        os.remove(os.path.join(self.save_dir, old_file))
+                    except:
+                        pass
+            
+            logger.info(f"Enhanced model saved to {checkpoint_path}")
         
         except Exception as e:
             logger.error(f"Error saving model: {str(e)}")
     
     def load_model(self, checkpoint_path):
         """
-        Load model checkpoint
+        Load model checkpoint with learning progress
         
         Args:
             checkpoint_path: Path to checkpoint file
@@ -391,7 +562,17 @@ class OnlineLearner:
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             self.updates_counter = checkpoint['updates_counter']
             
-            logger.info(f"Model loaded from {checkpoint_path}")
+            # Load learning progress if available
+            if 'trade_outcomes' in checkpoint:
+                self.trade_outcomes = checkpoint['trade_outcomes']
+                logger.info(f"Loaded learning progress: {self.get_learning_summary()}")
+            
+            # Load gating performance if available
+            if 'gating_performance' in checkpoint and self.gating_module:
+                gating_perf = checkpoint['gating_performance']
+                logger.info(f"Loaded feature performance data for {len(gating_perf)} features")
+            
+            logger.info(f"Enhanced model loaded from {checkpoint_path}")
             return True
         
         except Exception as e:
