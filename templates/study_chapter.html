@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ chapter.title }} - {{ course.name }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * {
+            font-family: 'Vazir', 'IRANSans', sans-serif;
+        }
+        
+        body {
+            background: #f8f9fa;
+        }
+        
+        .navbar {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .navbar-brand, .navbar-nav .nav-link {
+            color: white !important;
+        }
+        
+        .chat-container {
+            height: 70vh;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .chat-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1rem;
+            border-radius: 15px 15px 0 0;
+        }
+        
+        .chat-messages {
+            flex: 1;
+            padding: 1rem;
+            overflow-y: auto;
+            max-height: 400px;
+        }
+        
+        .message {
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: flex-start;
+        }
+        
+        .message.user {
+            justify-content: flex-end;
+        }
+        
+        .message.assistant {
+            justify-content: flex-start;
+        }
+        
+        .message-content {
+            max-width: 70%;
+            padding: 0.75rem 1rem;
+            border-radius: 15px;
+            word-wrap: break-word;
+        }
+        
+        .message.user .message-content {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+        }
+        
+        .message.assistant .message-content {
+            background: #e9ecef;
+            color: #495057;
+        }
+        
+        .chat-input {
+            padding: 1rem;
+            border-top: 1px solid #e9ecef;
+            border-radius: 0 0 15px 15px;
+        }
+        
+        .chapter-info {
+            background: white;
+            border-radius: 15px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .btn-exam {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            border: none;
+            color: white;
+            border-radius: 10px;
+            padding: 0.75rem 1.5rem;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-exam:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.4);
+            color: white;
+        }
+        
+        .btn-summary {
+            background: linear-gradient(135deg, #6f42c1 0%, #e83e8c 100%);
+            border: none;
+            color: white;
+            border-radius: 10px;
+            padding: 0.5rem 1rem;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-summary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(111, 66, 193, 0.4);
+            color: white;
+        }
+        
+        .exam-modal .modal-content {
+            border-radius: 15px;
+        }
+        
+        .question-card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        
+        .option {
+            background: white;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            padding: 0.5rem;
+            margin: 0.25rem 0;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .option:hover {
+            border-color: #4facfe;
+            background: #f8f9ff;
+        }
+        
+        .option.selected {
+            border-color: #4facfe;
+            background: #e3f2fd;
+        }
+        
+        .timer {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+            <a class="navbar-brand" href="{{ url_for('student_dashboard') }}">
+                <i class="fas fa-arrow-right"></i> بازگشت به داشبورد
+            </a>
+            
+            <div class="navbar-nav ms-auto">
+                <span class="navbar-text text-white">
+                    <i class="fas fa-user"></i> {{ student.first_name }} {{ student.last_name }}
+                </span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <!-- Chapter Information -->
+        <div class="chapter-info">
+            <div class="row align-items-center">
+                <div class="col-md-8">
+                    <h3><i class="fas fa-book text-primary"></i> {{ course.name }} - {{ chapter.title }}</h3>
+                    <p class="text-muted mb-0">مقطع: {{ student.grade_level }} | ترتیب فصل: {{ chapter.order }}</p>
+                </div>
+                <div class="col-md-4 text-end">
+                    <button class="btn btn-summary me-2" onclick="getSummary()">
+                        <i class="fas fa-file-alt"></i> خلاصه فصل
+                    </button>
+                    <button class="btn btn-exam" onclick="requestExam()">
+                        <i class="fas fa-clipboard-check"></i> درخواست امتحان
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chat Interface -->
+        <div class="chat-container">
+            <div class="chat-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-robot"></i> مدرس هوش مصنوعی - {{ chapter.title }}
+                </h5>
+                <small>برای شروع یادگیری سوال خود را بپرسید</small>
+            </div>
+            
+            <div class="chat-messages" id="chatMessages">
+                {% set messages = chat_session.get_messages() %}
+                {% if messages %}
+                    {% for message in messages %}
+                    <div class="message {{ message.role }}">
+                        <div class="message-content">
+                            {{ message.content }}
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="message assistant">
+                        <div class="message-content">
+                            سلام! من مدرس هوش مصنوعی شما هستم. در اینجا می‌توانید درباره موضوع "{{ chapter.title }}" سوال بپرسید. برای شروع امتحان کلمه "امتحان" را تایپ کنید.
+                        </div>
+                    </div>
+                {% endif %}
+            </div>
+            
+            <div class="chat-input">
+                <div class="input-group">
+                    <input type="text" class="form-control" id="messageInput" placeholder="پیام خود را اینجا بنویسید..." onkeypress="handleKeyPress(event)">
+                    <button class="btn btn-primary" onclick="sendMessage()">
+                        <i class="fas fa-paper-plane"></i> ارسال
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Exam Modal -->
+    <div class="modal fade exam-modal" id="examModal" tabindex="-1" data-bs-backdrop="static">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-clipboard-check"></i> امتحان {{ chapter.title }}
+                    </h5>
+                    <div class="timer" id="examTimer">00:00</div>
+                </div>
+                <div class="modal-body" id="examContent">
+                    <!-- Exam questions will be loaded here -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-success" id="submitExamBtn" onclick="submitExam()">
+                        <i class="fas fa-check"></i> ارسال پاسخ‌ها
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const chapterId = {{ chapter.id }};
+        let currentExamId = null;
+        let examAnswers = {};
+        
+        // Set current exam ID for anti-cheat monitoring
+        window.currentExamId = null;
+        
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+        
+        async function sendMessage() {
+            const messageInput = document.getElementById('messageInput');
+            const message = messageInput.value.trim();
+            
+            if (!message) return;
+            
+            // Add user message to chat
+            addMessageToChat('user', message);
+            messageInput.value = '';
+            
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        chapter_id: chapterId
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.type === 'exam_request') {
+                    addMessageToChat('assistant', data.message);
+                    setTimeout(() => {
+                        if (confirm('آیا آماده شرکت در امتحان هستید؟')) {
+                            startExam();
+                        }
+                    }, 1000);
+                } else {
+                    addMessageToChat('assistant', data.message);
+                }
+            } catch (error) {
+                addMessageToChat('assistant', 'متاسفانه خطایی رخ داده است. لطفاً دوباره تلاش کنید.');
+            }
+        }
+        
+        function addMessageToChat(role, content) {
+            const chatMessages = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.textContent = content;
+            
+            messageDiv.appendChild(contentDiv);
+            chatMessages.appendChild(messageDiv);
+            
+            // Scroll to bottom
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        async function getSummary() {
+            addMessageToChat('user', 'لطفاً خلاصه‌ای از این فصل بدهید');
+            
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: 'لطفاً خلاصه‌ای از این فصل بدهید',
+                        chapter_id: chapterId
+                    })
+                });
+                
+                const data = await response.json();
+                addMessageToChat('assistant', data.message);
+            } catch (error) {
+                addMessageToChat('assistant', 'متاسفانه خطایی رخ داده است.');
+            }
+        }
+        
+        function requestExam() {
+            if (confirm('آیا آماده شرکت در امتحان این فصل هستید؟')) {
+                startExam();
+            }
+        }
+        
+        async function startExam() {
+            try {
+                const response = await fetch('/api/start-exam', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        chapter_id: chapterId
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    alert(data.error);
+                    return;
+                }
+                
+                currentExamId = data.exam_id;
+                window.currentExamId = currentExamId;
+                examAnswers = {};
+                
+                displayExam(data.questions, data.duration);
+                
+                // Start anti-cheat monitoring
+                const script1 = document.createElement('script');
+                script1.textContent = getAntiCheatCode();
+                document.head.appendChild(script1);
+                
+                const script2 = document.createElement('script');
+                script2.textContent = getTimerCode(data.duration);
+                document.head.appendChild(script2);
+                
+            } catch (error) {
+                alert('خطا در شروع امتحان');
+            }
+        }
+        
+        function displayExam(questions, duration) {
+            const examContent = document.getElementById('examContent');
+            examContent.innerHTML = '';
+            
+            questions.forEach((question, index) => {
+                const questionDiv = document.createElement('div');
+                questionDiv.className = 'question-card';
+                
+                let questionHtml = `
+                    <h6>سوال ${index + 1}: ${question.question}</h6>
+                `;
+                
+                if (question.type === 'multiple_choice') {
+                    questionHtml += '<div class="options">';
+                    question.options.forEach((option, optionIndex) => {
+                        questionHtml += `
+                            <div class="option" onclick="selectOption(${question.id}, ${optionIndex})">
+                                ${String.fromCharCode(65 + optionIndex)}) ${option}
+                            </div>
+                        `;
+                    });
+                    questionHtml += '</div>';
+                } else if (question.type === 'essay') {
+                    questionHtml += `
+                        <textarea class="form-control mt-2" rows="4" 
+                                  placeholder="پاسخ خود را اینجا بنویسید..."
+                                  onchange="setEssayAnswer(${question.id}, this.value)"></textarea>
+                    `;
+                }
+                
+                questionDiv.innerHTML = questionHtml;
+                examContent.appendChild(questionDiv);
+            });
+            
+            new bootstrap.Modal(document.getElementById('examModal')).show();
+        }
+        
+        function selectOption(questionId, optionIndex) {
+            // Remove previous selection
+            document.querySelectorAll('.option').forEach(opt => opt.classList.remove('selected'));
+            
+            // Add selection to clicked option
+            event.target.classList.add('selected');
+            
+            examAnswers[questionId] = optionIndex;
+        }
+        
+        function setEssayAnswer(questionId, answer) {
+            examAnswers[questionId] = answer;
+        }
+        
+        async function submitExam() {
+            if (!confirm('آیا از ارسال پاسخ‌های خود اطمینان دارید؟')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/submit-exam', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        exam_id: currentExamId,
+                        answers: examAnswers
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    alert(data.error);
+                    return;
+                }
+                
+                // Close exam modal
+                bootstrap.Modal.getInstance(document.getElementById('examModal')).hide();
+                
+                // Show result
+                alert(\`نمره شما: \${data.score}/20\n\${data.message}\`);
+                
+                // Refresh page to update progress
+                window.location.reload();
+                
+            } catch (error) {
+                alert('خطا در ارسال امتحان');
+            }
+        }
+        
+        function getAntiCheatCode() {
+            return `
+                // Anti-cheat monitoring
+                let examWarnings = 0;
+                
+                window.addEventListener('blur', function() {
+                    if (window.currentExamId && examWarnings < 2) {
+                        examWarnings++;
+                        alert('هشدار: تغییر پنجره در حین امتحان مجاز نیست. هشدار ' + examWarnings + ' از 2');
+                    } else if (window.currentExamId && examWarnings >= 2) {
+                        alert('امتحان به دلیل تقلب لغو شد!');
+                        window.location.href = '/student-dashboard';
+                    }
+                });
+            `;
+        }
+        
+        function getTimerCode(duration) {
+            return `
+                let timeRemaining = ${duration};
+                let timerDisplay = document.getElementById('examTimer');
+                
+                function updateTimer() {
+                    if (timeRemaining <= 0) {
+                        alert('زمان امتحان به پایان رسید!');
+                        document.getElementById('submitExamBtn').click();
+                        return;
+                    }
+                    
+                    let minutes = Math.floor(timeRemaining / 60);
+                    let seconds = timeRemaining % 60;
+                    
+                    if (timerDisplay) {
+                        timerDisplay.textContent = 
+                            String(minutes).padStart(2, '0') + ':' + 
+                            String(seconds).padStart(2, '0');
+                    }
+                    
+                    if (timeRemaining === 300) {
+                        alert('توجه: 5 دقیقه به پایان امتحان باقی مانده!');
+                    }
+                    
+                    timeRemaining--;
+                }
+                
+                updateTimer();
+                setInterval(updateTimer, 1000);
+            `;
+        }
+    </script>
+</body>
+</html>

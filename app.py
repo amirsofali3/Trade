@@ -1,417 +1,425 @@
-import logging
-import os
-import json
-from flask import Flask, render_template, jsonify, request
-import pandas as pd
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash
+from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
+from werkzeug.security import check_password_hash, generate_password_hash
 from datetime import datetime, timedelta
-import threading
-import queue
-import time
-import plotly
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import os
+from dotenv import load_dotenv
+import json
+import openai
+import uuid
+from utils.ai_tutor import AITutor
+from utils.whatsapp_notifier import WhatsAppNotifier
+from utils.anti_cheat import AntiCheatMonitor
+from models.database import db, Student, Admin, Course, Chapter, Exam, ExamResult, ChatSession, Notification
 
-logger = logging.getLogger("WebInterface")
+# Load environment variables
+load_dotenv()
 
-# Initialize Flask app
-app = Flask(__name__, 
-            template_folder=os.path.join(os.path.dirname(__file__), 'templates'),
-            static_folder=os.path.join(os.path.dirname(__file__), 'static'))
+app = Flask(__name__)
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///ai_school.db')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Global data store
-data_store = {
-    'bot_status': 'offline',
-    'last_update': None,
-    'trading_data': {
-        'portfolio': {'balance': 0, 'equity': 0, 'positions': []},
-        'signals': [],
-        'performance': {'daily': 0, 'weekly': 0, 'monthly': 0, 'all_time': 0},
-        'ohlcv': pd.DataFrame(),
-        'indicators': {},
-        'predictions': []
-    },
-    'system_stats': {
-        'cpu_usage': 0,
-        'memory_usage': 0,
-        'uptime': 0,
-        'errors': []
-    },
-    'settings': {
-        'symbol': 'BTCUSDT',
-        'timeframe': '5m',  # Changed to 5m as per requirements
-        'risk_per_trade': 0.02,
-        'take_profit': 0.05,
-        'stop_loss': 0.03,
-        'max_open_trades': 1
-    },
-    'model_stats': {
-        'feature_importance': {},
-        'update_counts': {},
-        'market_regime': 'neutral'
-    },
-    # New field to track active features
-    'active_features': {
-        'ohlcv': {'active': True, 'weight': 1.0},
-        'indicators': {
-            'rsi': {'active': True, 'weight': 0.8},
-            'macd': {'active': True, 'weight': 0.7},
-            'bollinger': {'active': True, 'weight': 0.9},
-            # Add more indicators as needed
-        },
-        'sentiment': {'active': True, 'weight': 0.5},
-        'orderbook': {'active': True, 'weight': 0.6},
-        'tick_data': {'active': True, 'weight': 0.7}
-    }
-}
+# Initialize extensions
+db.init_app(app)
+migrate = Migrate(app, db)
 
-# Message queue for communication with the trading bot
-bot_message_queue = queue.Queue()
+# Initialize AI Tutor and WhatsApp Notifier
+try:
+    ai_tutor = AITutor(os.getenv('OPENAI_API_KEY'))
+except Exception as e:
+    print(f"Warning: AI Tutor initialization failed: {e}")
+    ai_tutor = None
 
-# Routes
+try:
+    whatsapp_notifier = WhatsAppNotifier(
+        os.getenv('TWILIO_ACCOUNT_SID'),
+        os.getenv('TWILIO_AUTH_TOKEN'),
+        os.getenv('TWILIO_WHATSAPP_FROM')
+    )
+except Exception as e:
+    print(f"Warning: WhatsApp Notifier initialization failed: {e}")
+    whatsapp_notifier = None
+
+anti_cheat = AntiCheatMonitor()
+
 @app.route('/')
-def index():
-    """Render the main dashboard page"""
-    return render_template('index.html', 
-                          bot_status=data_store['bot_status'],
-                          last_update=data_store['last_update'],
-                          settings=data_store['settings'])
+def welcome():
+    """Welcome page with 4 sections as requested"""
+    return render_template('welcome.html')
 
-@app.route('/api/status')
-def status():
-    """Return the current status of the trading bot"""
+@app.route('/student-login', methods=['GET', 'POST'])
+def student_login():
+    if request.method == 'POST':
+        data = request.get_json()
+        username = data.get('username')
+        password = data.get('password')
+        
+        student = Student.query.filter_by(username=username).first()
+        if student and check_password_hash(student.password_hash, password):
+            session['user_id'] = student.id
+            session['user_type'] = 'student'
+            session['user_name'] = f"{student.first_name} {student.last_name}"
+            return jsonify({'success': True, 'redirect': url_for('student_dashboard')})
+        else:
+            return jsonify({'success': False, 'message': 'نام کاربری یا رمز عبور اشتباه است'})
+    
+    return render_template('student_login.html')
+
+@app.route('/admin-login', methods=['GET', 'POST'])
+def admin_login():
+    if request.method == 'POST':
+        data = request.get_json()
+        username = data.get('username')
+        password = data.get('password')
+        
+        admin = Admin.query.filter_by(username=username).first()
+        if admin and check_password_hash(admin.password_hash, password):
+            session['user_id'] = admin.id
+            session['user_type'] = 'admin'
+            session['user_name'] = admin.username
+            return jsonify({'success': True, 'redirect': url_for('admin_dashboard')})
+        else:
+            return jsonify({'success': False, 'message': 'نام کاربری یا رمز عبور اشتباه است'})
+    
+    return render_template('admin_login.html')
+
+@app.route('/student-dashboard')
+def student_dashboard():
+    if session.get('user_type') != 'student':
+        return redirect(url_for('student_login'))
+    
+    student = Student.query.get(session['user_id'])
+    courses = Course.query.filter_by(grade_level=student.grade_level).all()
+    
+    # Get student progress for each course
+    course_progress = {}
+    for course in courses:
+        chapters = Chapter.query.filter_by(course_id=course.id).order_by(Chapter.order).all()
+        unlocked_chapters = []
+        
+        for i, chapter in enumerate(chapters):
+            if i == 0:  # First chapter is always unlocked
+                unlocked_chapters.append(chapter.id)
+            else:
+                # Check if previous chapter exam was passed
+                prev_chapter = chapters[i-1]
+                exam_result = ExamResult.query.filter_by(
+                    student_id=student.id,
+                    chapter_id=prev_chapter.id
+                ).order_by(ExamResult.created_at.desc()).first()
+                
+                if exam_result and exam_result.score >= 17:
+                    unlocked_chapters.append(chapter.id)
+        
+        course_progress[course.id] = unlocked_chapters
+    
+    # Get recent notifications
+    notifications = Notification.query.filter_by(student_id=student.id, read=False).order_by(Notification.created_at.desc()).limit(5).all()
+    
+    return render_template('student_dashboard.html', 
+                         student=student, 
+                         courses=courses, 
+                         course_progress=course_progress,
+                         notifications=notifications)
+
+@app.route('/study/<int:course_id>/<int:chapter_id>')
+def study_chapter(course_id, chapter_id):
+    if session.get('user_type') != 'student':
+        return redirect(url_for('student_login'))
+    
+    student = Student.query.get(session['user_id'])
+    course = Course.query.get_or_404(course_id)
+    chapter = Chapter.query.get_or_404(chapter_id)
+    
+    # Check if chapter is unlocked
+    chapters = Chapter.query.filter_by(course_id=course_id).order_by(Chapter.order).all()
+    chapter_index = next((i for i, c in enumerate(chapters) if c.id == chapter_id), None)
+    
+    if chapter_index > 0:
+        prev_chapter = chapters[chapter_index - 1]
+        exam_result = ExamResult.query.filter_by(
+            student_id=student.id,
+            chapter_id=prev_chapter.id
+        ).order_by(ExamResult.created_at.desc()).first()
+        
+        if not exam_result or exam_result.score < 17:
+            flash('باید ابتدا امتحان فصل قبلی را با نمره 17 یا بالاتر قبول شوید', 'warning')
+            return redirect(url_for('student_dashboard'))
+    
+    # Get or create chat session for this chapter
+    chat_session = ChatSession.query.filter_by(
+        student_id=student.id,
+        chapter_id=chapter_id
+    ).first()
+    
+    if not chat_session:
+        chat_session = ChatSession(
+            student_id=student.id,
+            chapter_id=chapter_id,
+            messages=json.dumps([])
+        )
+        db.session.add(chat_session)
+        db.session.commit()
+    
+    return render_template('study_chapter.html', 
+                         student=student, 
+                         course=course, 
+                         chapter=chapter,
+                         chat_session=chat_session)
+
+@app.route('/api/chat', methods=['POST'])
+def chat_with_ai():
+    if session.get('user_type') != 'student':
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    data = request.get_json()
+    message = data.get('message', '')
+    chapter_id = data.get('chapter_id')
+    
+    if not chapter_id:
+        return jsonify({'error': 'Chapter ID required'}), 400
+    
+    student = Student.query.get(session['user_id'])
+    chapter = Chapter.query.get(chapter_id)
+    
+    # Get chat session
+    chat_session = ChatSession.query.filter_by(
+        student_id=student.id,
+        chapter_id=chapter_id
+    ).first()
+    
+    if not chat_session:
+        return jsonify({'error': 'Chat session not found'}), 404
+    
+    # Check if student is requesting exam
+    if 'امتحان' in message and ('بدم' in message or 'بگیرم' in message):
+        return jsonify({
+            'type': 'exam_request',
+            'message': 'آیا آماده شرکت در امتحان این فصل هستید؟'
+        })
+    
+    # Get AI response
+    messages = json.loads(chat_session.messages)
+    messages.append({'role': 'user', 'content': message, 'timestamp': datetime.utcnow().isoformat()})
+    
+    # Get AI response based on chapter content
+    if ai_tutor:
+        ai_response = ai_tutor.get_response(message, chapter.content, chapter.title)
+    else:
+        ai_response = f"متاسفانه سیستم هوش مصنوعی در حال حاضر در دسترس نیست. پیام شما: {message}"
+    
+    messages.append({'role': 'assistant', 'content': ai_response, 'timestamp': datetime.utcnow().isoformat()})
+    
+    # Update chat session
+    chat_session.messages = json.dumps(messages)
+    chat_session.updated_at = datetime.utcnow()
+    db.session.commit()
+    
     return jsonify({
-        'status': data_store['bot_status'],
-        'last_update': data_store['last_update'],
-        'system_stats': data_store['system_stats']
+        'type': 'chat_response',
+        'message': ai_response
     })
 
-@app.route('/api/portfolio')
-def portfolio():
-    """Return the current portfolio status"""
-    return jsonify(data_store['trading_data']['portfolio'])
-
-@app.route('/api/performance')
-def performance():
-    """Return performance metrics"""
-    return jsonify(data_store['trading_data']['performance'])
-
-@app.route('/api/signals')
-def signals():
-    """Return recent trading signals"""
-    limit = request.args.get('limit', default=10, type=int)
-    signals = data_store['trading_data']['signals'][-limit:]
-    return jsonify(signals)
-
-@app.route('/api/active-features')
-def active_features():
-    """Return the status of active features and their weights"""
-    return jsonify(data_store['active_features'])
-
-@app.route('/api/chart-data')
-def chart_data():
-    """Return data for charts"""
-    timeframe = request.args.get('timeframe', default='5m')  # Changed default to 5m
-    limit = request.args.get('limit', default=100, type=int)
+@app.route('/api/start-exam', methods=['POST'])
+def start_exam():
+    if session.get('user_type') != 'student':
+        return jsonify({'error': 'Unauthorized'}), 401
     
-    ohlcv = data_store['trading_data']['ohlcv']
-    if ohlcv.empty:
-        return jsonify({'error': 'No data available'})
+    data = request.get_json()
+    chapter_id = data.get('chapter_id')
     
-    # Limit the data
-    ohlcv = ohlcv.tail(limit)
+    student = Student.query.get(session['user_id'])
+    chapter = Chapter.query.get(chapter_id)
     
-    # Convert to list format for plotting
-    chart_data = {
-        'timestamps': ohlcv.index.tolist() if isinstance(ohlcv.index, pd.DatetimeIndex) else list(range(len(ohlcv))),
-        'open': ohlcv['open'].tolist(),
-        'high': ohlcv['high'].tolist(),
-        'low': ohlcv['low'].tolist(),
-        'close': ohlcv['close'].tolist(),
-        'volume': ohlcv['volume'].tolist()
+    # Check exam attempts
+    attempt_count = ExamResult.query.filter_by(
+        student_id=student.id,
+        chapter_id=chapter_id
+    ).count()
+    
+    if attempt_count >= 3:
+        last_result = ExamResult.query.filter_by(
+            student_id=student.id,
+            chapter_id=chapter_id
+        ).order_by(ExamResult.created_at.desc()).first()
+        
+        if last_result.score < 17:
+            return jsonify({
+                'error': 'شما سه بار امتحان داده‌اید. برای امتحان مجدد باید با مدیریت تماس بگیرید'
+            }), 400
+    
+    # Generate exam questions using AI
+    if ai_tutor:
+        questions = ai_tutor.generate_exam_questions(chapter.content, chapter.title)
+    else:
+        # Fallback questions for development
+        questions = [
+            {
+                "id": 1,
+                "type": "multiple_choice",
+                "question": f"سوال نمونه درباره {chapter.title}",
+                "options": ["گزینه الف", "گزینه ب", "گزینه ج", "گزینه د"],
+                "correct_answer": 0,
+                "points": 2
+            },
+            {
+                "id": 2,
+                "type": "essay",
+                "question": f"سوال تشریحی درباره {chapter.title}",
+                "points": 3,
+                "sample_answer": "پاسخ نمونه"
+            }
+        ]
+    
+    # Create exam session
+    exam_id = str(uuid.uuid4())
+    session[f'exam_{exam_id}'] = {
+        'chapter_id': chapter_id,
+        'questions': questions,
+        'start_time': datetime.utcnow().isoformat(),
+        'duration': 90 * len(questions)  # 1.5 minutes per question
     }
     
-    # Add indicators if available
-    indicators = data_store['trading_data']['indicators']
-    for name, values in indicators.items():
-        if len(values) >= len(ohlcv):
-            chart_data[name] = values[-len(ohlcv):]
+    return jsonify({
+        'exam_id': exam_id,
+        'questions': questions,
+        'duration': 90 * len(questions)
+    })
+
+@app.route('/api/submit-exam', methods=['POST'])
+def submit_exam():
+    if session.get('user_type') != 'student':
+        return jsonify({'error': 'Unauthorized'}), 401
     
-    # Add signals if available
-    signals = data_store['trading_data']['signals']
-    if signals:
-        chart_data['signals'] = [s for s in signals if s['timestamp'] in ohlcv.index]
+    data = request.get_json()
+    exam_id = data.get('exam_id')
+    answers = data.get('answers')
     
-    return jsonify(chart_data)
+    exam_data = session.get(f'exam_{exam_id}')
+    if not exam_data:
+        return jsonify({'error': 'Exam session not found'}), 404
+    
+    # Check if exam time has expired
+    start_time = datetime.fromisoformat(exam_data['start_time'])
+    if datetime.utcnow() > start_time + timedelta(seconds=exam_data['duration']):
+        return jsonify({'error': 'زمان امتحان به پایان رسیده است'}), 400
+    
+    # Grade the exam
+    questions = exam_data['questions']
+    if ai_tutor:
+        score = ai_tutor.grade_exam(questions, answers)
+    else:
+        # Fallback grading for development
+        score = 15.0  # Default score for testing
+    
+    # Save exam result
+    exam_result = ExamResult(
+        student_id=session['user_id'],
+        chapter_id=exam_data['chapter_id'],
+        questions=json.dumps(questions),
+        answers=json.dumps(answers),
+        score=score,
+        passed=score >= 17
+    )
+    db.session.add(exam_result)
+    db.session.commit()
+    
+    # Send WhatsApp notification to parents
+    student = Student.query.get(session['user_id'])
+    chapter = Chapter.query.get(exam_data['chapter_id'])
+    course = Course.query.get(chapter.course_id)
+    
+    if whatsapp_notifier:
+        whatsapp_notifier.send_exam_result(
+            student.parent_phone,
+            student.first_name + ' ' + student.last_name,
+            course.name,
+            chapter.title,
+            score
+        )
+    
+    # Clean up exam session
+    del session[f'exam_{exam_id}']
+    
+    return jsonify({
+        'score': score,
+        'passed': score >= 17,
+        'message': 'تبریک! شما قبول شدید' if score >= 17 else 'متاسفانه نمره شما کافی نیست. نمره قبولی 17 است'
+    })
 
-@app.route('/api/learning-stats')
-def learning_stats():
-    """Return learning system statistics"""
-    return jsonify(data_store.get('learning_stats', {
-        'total_trades': 0,
-        'success_rate': 0.0,
-        'net_profit': 0.0,
-        'model_updates': 0,
-        'feature_performance': {}
-    }))
+@app.route('/admin-dashboard')
+def admin_dashboard():
+    if session.get('user_type') != 'admin':
+        return redirect(url_for('admin_login'))
+    
+    # Get statistics
+    total_students = Student.query.count()
+    total_courses = Course.query.count()
+    total_exams_today = ExamResult.query.filter(
+        ExamResult.created_at >= datetime.utcnow().date()
+    ).count()
+    
+    # Get recent activities
+    recent_exams = db.session.query(ExamResult, Student, Chapter, Course).join(
+        Student, ExamResult.student_id == Student.id
+    ).join(
+        Chapter, ExamResult.chapter_id == Chapter.id
+    ).join(
+        Course, Chapter.course_id == Course.id
+    ).order_by(ExamResult.created_at.desc()).limit(10).all()
+    
+    return render_template('admin_dashboard.html',
+                         total_students=total_students,
+                         total_courses=total_courses,
+                         total_exams_today=total_exams_today,
+                         recent_exams=recent_exams)
 
-@app.route('/api/model-stats')
-def model_stats():
-    """Return model statistics"""
-    return jsonify(data_store['model_stats'])
+@app.route('/admin/students')
+def admin_students():
+    if session.get('user_type') != 'admin':
+        return redirect(url_for('admin_login'))
+    
+    students = Student.query.all()
+    return render_template('admin_students.html', students=students)
 
-@app.route('/api/plot')
-def plot():
-    """Generate a plot for display in the web interface"""
-    try:
-        ohlcv = data_store['trading_data']['ohlcv']
-        if ohlcv.empty:
-            return jsonify({'error': 'No data available'})
+@app.route('/admin/add-student', methods=['GET', 'POST'])
+def add_student():
+    if session.get('user_type') != 'admin':
+        return redirect(url_for('admin_login'))
+    
+    if request.method == 'POST':
+        data = request.get_json()
         
-        # Create figure with secondary y-axis
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                            vertical_spacing=0.02, row_heights=[0.7, 0.3],
-                            subplot_titles=('Price', 'Volume'))
+        # Check if username already exists
+        if Student.query.filter_by(username=data['username']).first():
+            return jsonify({'success': False, 'message': 'نام کاربری قبلاً استفاده شده است'})
         
-        # Add candlestick trace
-        fig.add_trace(go.Candlestick(
-            x=ohlcv.index,
-            open=ohlcv['open'],
-            high=ohlcv['high'],
-            low=ohlcv['low'],
-            close=ohlcv['close'],
-            name='OHLCV'
-        ), row=1, col=1)
-        
-        # Add volume trace
-        fig.add_trace(go.Bar(
-            x=ohlcv.index,
-            y=ohlcv['volume'],
-            name='Volume',
-            marker_color='rgba(0, 0, 255, 0.5)'
-        ), row=2, col=1)
-        
-        # Add indicator traces if available
-        indicators = data_store['trading_data']['indicators']
-        colors = ['red', 'blue', 'green', 'purple', 'orange', 'cyan']
-        color_idx = 0
-        
-        for name, values in indicators.items():
-            if len(values) == len(ohlcv):
-                fig.add_trace(go.Scatter(
-                    x=ohlcv.index,
-                    y=values,
-                    mode='lines',
-                    name=name,
-                    line=dict(color=colors[color_idx % len(colors)])
-                ), row=1, col=1)
-                color_idx += 1
-        
-        # Add signals if available
-        signals = data_store['trading_data']['signals']
-        buy_x = []
-        buy_y = []
-        sell_x = []
-        sell_y = []
-        
-        for signal in signals:
-            timestamp = signal.get('timestamp')
-            if timestamp in ohlcv.index:
-                idx = ohlcv.index.get_loc(timestamp)
-                price = signal.get('price', ohlcv['close'].iloc[idx])
-                
-                if signal['signal'] == 'BUY':
-                    buy_x.append(timestamp)
-                    buy_y.append(price)
-                elif signal['signal'] == 'SELL':
-                    sell_x.append(timestamp)
-                    sell_y.append(price)
-        
-        if buy_x:
-            fig.add_trace(go.Scatter(
-                x=buy_x,
-                y=buy_y,
-                mode='markers',
-                name='Buy',
-                marker=dict(color='green', size=10, symbol='triangle-up')
-            ), row=1, col=1)
-        
-        if sell_x:
-            fig.add_trace(go.Scatter(
-                x=sell_x,
-                y=sell_y,
-                mode='markers',
-                name='Sell',
-                marker=dict(color='red', size=10, symbol='triangle-down')
-            ), row=1, col=1)
-        
-        # Update layout
-        fig.update_layout(
-            title=f"{data_store['settings']['symbol']} - {data_store['settings']['timeframe']}",
-            xaxis_title='Time',
-            yaxis_title='Price',
-            template='plotly_white',
-            xaxis_rangeslider_visible=False,
-            margin=dict(l=50, r=50, b=50, t=80),
-            height=600,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            hovermode='x'
+        student = Student(
+            username=data['username'],
+            password_hash=generate_password_hash(data['password']),
+            first_name=data['first_name'],
+            last_name=data['last_name'],
+            email=data['email'],
+            phone=data['phone'],
+            parent_phone=data['parent_phone'],
+            grade_level=data['grade_level']
         )
         
-        # Convert to JSON
-        graphJSON = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
-        return graphJSON
+        db.session.add(student)
+        db.session.commit()
         
-    except Exception as e:
-        logger.error(f"Error generating plot: {str(e)}")
-        return jsonify({'error': str(e)})
-
-@app.route('/api/settings', methods=['GET', 'POST'])
-def settings():
-    """Get or update bot settings"""
-    if request.method == 'POST':
-        try:
-            new_settings = request.json
-            
-            # Validate and update settings
-            if 'symbol' in new_settings:
-                data_store['settings']['symbol'] = new_settings['symbol']
-            if 'timeframe' in new_settings:
-                data_store['settings']['timeframe'] = new_settings['timeframe']
-            if 'risk_per_trade' in new_settings:
-                risk = float(new_settings['risk_per_trade'])
-                data_store['settings']['risk_per_trade'] = max(0.01, min(risk, 0.1))
-            if 'take_profit' in new_settings:
-                tp = float(new_settings['take_profit'])
-                data_store['settings']['take_profit'] = max(0.01, tp)
-            if 'stop_loss' in new_settings:
-                sl = float(new_settings['stop_loss'])
-                data_store['settings']['stop_loss'] = max(0.01, sl)
-            if 'max_open_trades' in new_settings:
-                data_store['settings']['max_open_trades'] = max(1, int(new_settings['max_open_trades']))
-            
-            # Send settings update to bot
-            bot_message_queue.put({
-                'type': 'settings_update',
-                'settings': data_store['settings']
-            })
-            
-            return jsonify({'status': 'success', 'settings': data_store['settings']})
-            
-        except Exception as e:
-            logger.error(f"Error updating settings: {str(e)}")
-            return jsonify({'status': 'error', 'message': str(e)})
-    else:
-        return jsonify(data_store['settings'])
-
-@app.route('/api/control', methods=['POST'])
-def control():
-    """Control the trading bot (start/stop/restart)"""
-    try:
-        action = request.json.get('action')
-        
-        if action == 'start':
-            if data_store['bot_status'] != 'running':
-                # Send start command to bot
-                bot_message_queue.put({'type': 'command', 'command': 'start'})
-                data_store['bot_status'] = 'starting'
-                return jsonify({'status': 'success', 'message': 'Starting bot...'})
-            else:
-                return jsonify({'status': 'warning', 'message': 'Bot is already running'})
-                
-        elif action == 'stop':
-            if data_store['bot_status'] != 'stopped':
-                # Send stop command to bot
-                bot_message_queue.put({'type': 'command', 'command': 'stop'})
-                data_store['bot_status'] = 'stopping'
-                return jsonify({'status': 'success', 'message': 'Stopping bot...'})
-            else:
-                return jsonify({'status': 'warning', 'message': 'Bot is already stopped'})
-                
-        elif action == 'restart':
-            # Send restart command to bot
-            bot_message_queue.put({'type': 'command', 'command': 'restart'})
-            data_store['bot_status'] = 'restarting'
-            return jsonify({'status': 'success', 'message': 'Restarting bot...'})
-            
-        else:
-            return jsonify({'status': 'error', 'message': 'Invalid action'})
-            
-    except Exception as e:
-        logger.error(f"Error controlling bot: {str(e)}")
-        return jsonify({'status': 'error', 'message': str(e)})
-
-def update_from_trade(bot_data):
-    """
-    Update data store with information from trading bot
+        return jsonify({'success': True, 'message': 'دانش‌آموز با موفقیت اضافه شد'})
     
-    Args:
-        bot_data: Dictionary with updated trading bot data
-    """
-    try:
-        # Update status
-        if 'status' in bot_data:
-            data_store['bot_status'] = bot_data['status']
-        
-        # Update last update time
-        data_store['last_update'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        # Update trading data
-        if 'portfolio' in bot_data:
-            data_store['trading_data']['portfolio'] = bot_data['portfolio']
-        
-        if 'signals' in bot_data:
-            data_store['trading_data']['signals'] = bot_data['signals']
-        
-        if 'performance' in bot_data:
-            data_store['trading_data']['performance'] = bot_data['performance']
-        
-        if 'ohlcv' in bot_data:
-            data_store['trading_data']['ohlcv'] = bot_data['ohlcv']
-        
-        if 'indicators' in bot_data:
-            data_store['trading_data']['indicators'] = bot_data['indicators']
-        
-        if 'predictions' in bot_data:
-            data_store['trading_data']['predictions'] = bot_data['predictions']
-        
-        # Update system stats
-        if 'system_stats' in bot_data:
-            data_store['system_stats'] = bot_data['system_stats']
-        
-        # Update model stats
-        if 'model_stats' in bot_data:
-            data_store['model_stats'] = bot_data['model_stats']
-        
-        # Update active features
-        if 'active_features' in bot_data:
-            data_store['active_features'] = bot_data['active_features']
-        
-        logger.debug("Updated data store from trading bot")
-        
-    except Exception as e:
-        logger.error(f"Error updating from trading bot: {str(e)}")
+    return render_template('add_student.html')
 
-def start_web_server(host='0.0.0.0', port=5000, debug=False):
-    """
-    Start the web server
-    
-    Args:
-        host: Host to bind to
-        port: Port to listen on
-        debug: Enable debug mode
-    """
-    try:
-        app.run(host=host, port=port, debug=debug)
-    except Exception as e:
-        logger.error(f"Error starting web server: {str(e)}")
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('welcome'))
 
-# Run the app
-if __name__ == "__main__":
-    # Configure logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    
-    # Start web server
-    start_web_server(debug=True)
+if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
+    app.run(debug=True, host='0.0.0.0', port=5000)

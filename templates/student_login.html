@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ورود دانش‌آموزان - مدرسه آنلاین هوش مصنوعی</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * {
+            font-family: 'Vazir', 'IRANSans', sans-serif;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .login-container {
+            background: white;
+            border-radius: 20px;
+            padding: 3rem;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 400px;
+        }
+        
+        .login-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        
+        .login-header i {
+            font-size: 4rem;
+            color: #4facfe;
+            margin-bottom: 1rem;
+        }
+        
+        .login-header h2 {
+            color: #2d3748;
+            margin-bottom: 0.5rem;
+        }
+        
+        .login-header p {
+            color: #718096;
+        }
+        
+        .form-floating label {
+            color: #718096;
+        }
+        
+        .form-control {
+            border-radius: 10px;
+            border: 2px solid #e2e8f0;
+            transition: all 0.3s ease;
+        }
+        
+        .form-control:focus {
+            border-color: #4facfe;
+            box-shadow: 0 0 0 0.2rem rgba(79, 172, 254, 0.25);
+        }
+        
+        .btn-login {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            border: none;
+            border-radius: 10px;
+            padding: 0.75rem;
+            color: white;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-login:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(79, 172, 254, 0.4);
+            color: white;
+        }
+        
+        .back-link {
+            text-align: center;
+            margin-top: 2rem;
+        }
+        
+        .back-link a {
+            color: #4facfe;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        
+        .back-link a:hover {
+            text-decoration: underline;
+        }
+        
+        .alert {
+            border-radius: 10px;
+            border: none;
+        }
+        
+        .loading {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="login-container">
+            <div class="login-header">
+                <i class="fas fa-user-graduate"></i>
+                <h2>ورود دانش‌آموزان</h2>
+                <p>به پنل یادگیری خود وارد شوید</p>
+            </div>
+            
+            <div id="alert-container"></div>
+            
+            <form id="loginForm">
+                <div class="form-floating mb-3">
+                    <input type="text" class="form-control" id="username" name="username" placeholder="نام کاربری" required>
+                    <label for="username"><i class="fas fa-user"></i> نام کاربری</label>
+                </div>
+                
+                <div class="form-floating mb-4">
+                    <input type="password" class="form-control" id="password" name="password" placeholder="رمز عبور" required>
+                    <label for="password"><i class="fas fa-lock"></i> رمز عبور</label>
+                </div>
+                
+                <button type="submit" class="btn btn-login w-100">
+                    <span class="normal-text">
+                        <i class="fas fa-sign-in-alt"></i> ورود به سیستم
+                    </span>
+                    <span class="loading">
+                        <i class="fas fa-spinner fa-spin"></i> در حال ورود...
+                    </span>
+                </button>
+            </form>
+            
+            <div class="back-link">
+                <a href="{{ url_for('welcome') }}">
+                    <i class="fas fa-arrow-right"></i> بازگشت به صفحه اصلی
+                </a>
+            </div>
+            
+            <div class="mt-4 text-center">
+                <small class="text-muted">
+                    <i class="fas fa-info-circle"></i>
+                    در صورت عدم داشتن حساب کاربری، با مدیریت تماس بگیرید
+                </small>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const submitBtn = document.querySelector('button[type="submit"]');
+            const alertContainer = document.getElementById('alert-container');
+            
+            // Show loading state
+            submitBtn.querySelector('.normal-text').style.display = 'none';
+            submitBtn.querySelector('.loading').style.display = 'inline';
+            submitBtn.disabled = true;
+            
+            try {
+                const response = await fetch('/student-login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        username: username,
+                        password: password
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Show success message
+                    alertContainer.innerHTML = `
+                        <div class="alert alert-success">
+                            <i class="fas fa-check-circle"></i> ورود موفقیت‌آمیز! در حال انتقال...
+                        </div>
+                    `;
+                    
+                    // Redirect after a short delay
+                    setTimeout(() => {
+                        window.location.href = data.redirect;
+                    }, 1500);
+                } else {
+                    // Show error message
+                    alertContainer.innerHTML = `
+                        <div class="alert alert-danger">
+                            <i class="fas fa-exclamation-circle"></i> ${data.message}
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                alertContainer.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-circle"></i> خطا در برقراری ارتباط با سرور
+                    </div>
+                `;
+            } finally {
+                // Reset button state
+                submitBtn.querySelector('.normal-text').style.display = 'inline';
+                submitBtn.querySelector('.loading').style.display = 'none';
+                submitBtn.disabled = false;
+            }
+        });
+        
+        // Clear alerts when user starts typing
+        document.getElementById('username').addEventListener('input', clearAlerts);
+        document.getElementById('password').addEventListener('input', clearAlerts);
+        
+        function clearAlerts() {
+            document.getElementById('alert-container').innerHTML = '';
+        }
+    </script>
+</body>
+</html>
