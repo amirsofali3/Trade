@@ -97,27 +97,149 @@ class MarketTransformer(nn.Module):
             logger.warning("No features provided to model")
             return torch.tensor([[0.0, 0.0, 1.0]]), 0.0
         
-        # Process and embed each feature type
+        # Process and embed each feature type with improved shape handling
         embedded_features = []
         
-        for name, (seq_len, _) in self.feature_dims.items():
+        for name, (expected_seq_len, expected_feature_dim) in self.feature_dims.items():
             if name in features_dict:
                 # Get features and ensure proper shape
                 x = features_dict[name]
                 
-                # Handle different input formats
+                # Handle different input formats more robustly
                 if len(x.shape) == 1:
-                    x = x.unsqueeze(0)  # Add batch dimension
+                    # 1D tensor: check if it's sequential or single features
+                    if name in ['ohlcv', 'indicator', 'tick_data']:
+                        # Sequential data flattened - reshape to (1, seq_len, feature_dim)
+                        total_elements = x.size(0)
+                        if total_elements == expected_seq_len * expected_feature_dim:
+                            x = x.view(1, expected_seq_len, expected_feature_dim)
+                        else:
+                            # Truncate or pad to expected dimensions
+                            if total_elements > expected_feature_dim:
+                                # Treat as sequence and take recent values
+                                x = x[-expected_feature_dim:].unsqueeze(0).unsqueeze(0)
+                            else:
+                                # Pad and treat as single timestep
+                                padded = torch.zeros(expected_feature_dim)
+                                padded[:total_elements] = x
+                                x = padded.unsqueeze(0).unsqueeze(0)
+                    else:
+                        # Non-sequential data - add batch dimension
+                        if x.size(0) == expected_feature_dim:
+                            x = x.unsqueeze(0)  # Shape: (1, features)
+                        else:
+                            # Truncate or pad
+                            padded = torch.zeros(expected_feature_dim)
+                            padded[:min(x.size(0), expected_feature_dim)] = x[:expected_feature_dim]
+                            x = padded.unsqueeze(0)
                 
-                if x.shape[0] > 1 and name != 'ohlcv' and name != 'indicator':
-                    # Average over batch dimension except for sequential features
-                    x = torch.mean(x, dim=0, keepdim=True)
+                elif len(x.shape) == 2:
+                    # 2D tensor: could be (batch, features) or (seq, features)
+                    if name in ['ohlcv', 'indicator', 'tick_data']:
+                        # Sequential data: should be (seq, features)
+                        if x.size(0) == 1:
+                            # Actually (1, total_features) - reshape to sequence
+                            total_features = x.size(1)
+                            if total_features == expected_seq_len * expected_feature_dim:
+                                x = x.view(1, expected_seq_len, expected_feature_dim)
+                            else:
+                                # Expand to sequence dimension
+                                x = x.unsqueeze(1).expand(-1, expected_seq_len, -1)
+                                # Adjust feature dimension
+                                if x.size(-1) != expected_feature_dim:
+                                    if x.size(-1) > expected_feature_dim:
+                                        x = x[:, :, :expected_feature_dim]
+                                    else:
+                                        padding = torch.zeros(x.size(0), x.size(1), expected_feature_dim - x.size(-1))
+                                        x = torch.cat([x, padding], dim=-1)
+                        else:
+                            # Proper (seq, features) format
+                            # Ensure batch dimension
+                            if x.size(0) != expected_seq_len or x.size(1) != expected_feature_dim:
+                                # Adjust sequence length
+                                if x.size(0) > expected_seq_len:
+                                    x = x[-expected_seq_len:, :]
+                                elif x.size(0) < expected_seq_len:
+                                    padding = torch.zeros(expected_seq_len - x.size(0), x.size(1))
+                                    x = torch.cat([padding, x], dim=0)
+                                
+                                # Adjust feature dimension
+                                if x.size(1) != expected_feature_dim:
+                                    if x.size(1) > expected_feature_dim:
+                                        x = x[:, :expected_feature_dim]
+                                    else:
+                                        padding = torch.zeros(x.size(0), expected_feature_dim - x.size(1))
+                                        x = torch.cat([x, padding], dim=1)
+                            
+                            # Add batch dimension
+                            x = x.unsqueeze(0)
+                    else:
+                        # Non-sequential data: should be (batch, features)
+                        if x.size(0) > 1:
+                            # Multiple batches - take mean
+                            x = torch.mean(x, dim=0, keepdim=True)
+                        
+                        # Adjust feature dimension
+                        if x.size(1) != expected_feature_dim:
+                            if x.size(1) > expected_feature_dim:
+                                x = x[:, :expected_feature_dim]
+                            else:
+                                padding = torch.zeros(x.size(0), expected_feature_dim - x.size(1))
+                                x = torch.cat([x, padding], dim=1)
+                
+                elif len(x.shape) == 3:
+                    # 3D tensor: (batch, seq, features) - ideal format
+                    batch_size, seq_len, feature_dim = x.shape
+                    
+                    # Handle batch dimension
+                    if batch_size > 1:
+                        x = torch.mean(x, dim=0, keepdim=True)
+                    
+                    # Adjust sequence length
+                    if seq_len != expected_seq_len:
+                        if seq_len > expected_seq_len:
+                            x = x[:, -expected_seq_len:, :]
+                        else:
+                            padding = torch.zeros(x.size(0), expected_seq_len - seq_len, x.size(2))
+                            x = torch.cat([padding, x], dim=1)
+                    
+                    # Adjust feature dimension
+                    if feature_dim != expected_feature_dim:
+                        if feature_dim > expected_feature_dim:
+                            x = x[:, :, :expected_feature_dim]
+                        else:
+                            padding = torch.zeros(x.size(0), x.size(1), expected_feature_dim - feature_dim)
+                            x = torch.cat([x, padding], dim=2)
+                
+                else:
+                    # Higher dimensional - flatten and reshape
+                    x = x.view(-1)
+                    total_elements = expected_seq_len * expected_feature_dim
+                    
+                    if x.size(0) >= total_elements:
+                        x = x[:total_elements].view(1, expected_seq_len, expected_feature_dim)
+                    else:
+                        padded = torch.zeros(total_elements)
+                        padded[:x.size(0)] = x
+                        x = padded.view(1, expected_seq_len, expected_feature_dim)
                 
                 # Embed features to hidden_dim
-                embedded = self.embeddings[name](x)
+                if name in ['ohlcv', 'indicator', 'tick_data']:
+                    # Sequential features: embed each timestep
+                    # x shape: (1, seq_len, feature_dim)
+                    batch_size, seq_len, feature_dim = x.shape
+                    x_flat = x.view(-1, feature_dim)  # (batch_size * seq_len, feature_dim)
+                    embedded_flat = self.embeddings[name](x_flat)  # (batch_size * seq_len, hidden_dim)
+                    embedded = embedded_flat.view(batch_size, seq_len, self.hidden_dim)
+                else:
+                    # Non-sequential features: embed directly
+                    # x shape: (1, feature_dim)
+                    embedded = self.embeddings[name](x)
+                    # Expand to sequence length for compatibility
+                    embedded = embedded.unsqueeze(1)  # (1, 1, hidden_dim)
                 
                 # Add position encoding for sequential features
-                if name == 'ohlcv' or name == 'indicator':
+                if name == 'ohlcv' or name == 'indicator' or name == 'tick_data':
                     seq_len_actual = min(embedded.shape[1], self.position_encoding.shape[1])
                     embedded[:, :seq_len_actual, :] += self.position_encoding[:, :seq_len_actual, :]
                 
@@ -125,41 +247,32 @@ class MarketTransformer(nn.Module):
         
         if not embedded_features:
             logger.warning("No valid features to process")
-            return torch.tensor([[0.0, 0.0, 1.0]]), 0.0
+            return torch.tensor([[0.0, 0.0, 1.0]]), torch.tensor([0.0])
         
-        # Combine features
-        # For sequential features (OHLCV, indicators) we concatenate along time dimension
-        # For point features (sentiment, orderbook) we replicate to match sequence length
+        # Combine features by concatenating along sequence dimension
+        # All features now have shape (1, seq_len, hidden_dim) or (1, 1, hidden_dim)
+        max_seq_len = max(feat.shape[1] for feat in embedded_features)
         
-        # First, find the maximum sequence length among all features
-        max_seq_len = max(feat.shape[1] if len(feat.shape) > 2 else 1 for feat in embedded_features)
-        
-        # Process each feature to make it compatible
-        processed_features = []
-        
+        # Expand all features to max sequence length
+        expanded_features = []
         for feat in embedded_features:
-            if len(feat.shape) <= 2:  # Point feature
-                # Replicate to match sequence length
-                feat_expanded = feat.expand(-1, max_seq_len, -1)
-                processed_features.append(feat_expanded)
-            else:  # Sequential feature
-                if feat.shape[1] < max_seq_len:
-                    # Pad with zeros
-                    padding = torch.zeros(feat.shape[0], max_seq_len - feat.shape[1], feat.shape[2])
-                    feat_padded = torch.cat([feat, padding], dim=1)
-                    processed_features.append(feat_padded)
-                else:
-                    # Truncate to max_seq_len
-                    processed_features.append(feat[:, :max_seq_len, :])
+            if feat.shape[1] < max_seq_len:
+                # Expand by repeating the last timestep
+                last_timestep = feat[:, -1:, :].expand(-1, max_seq_len - feat.shape[1], -1)
+                feat_expanded = torch.cat([feat, last_timestep], dim=1)
+            else:
+                feat_expanded = feat
+            expanded_features.append(feat_expanded)
         
-        # Concatenate all features
-        x = torch.cat(processed_features, dim=0)
+        # Concatenate along the hidden dimension (sum embeddings)
+        # Alternative: could concatenate but that would increase hidden_dim
+        x = torch.stack(expanded_features, dim=0).sum(dim=0)  # Sum across feature types
         
         # Apply transformer encoder
         x = self.transformer_encoder(x)
         
-        # Pool over sequence dimension
-        x = torch.mean(x, dim=1)
+        # Pool over sequence dimension (global average pooling)
+        x = torch.mean(x, dim=1)  # Shape: (1, hidden_dim)
         
         # Final prediction layers
         x = self.fc1(x)

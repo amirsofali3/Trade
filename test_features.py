@@ -23,7 +23,7 @@ def test_indicators():
         from data_collection.indicators import IndicatorCalculator
         
         # Create sample OHLCV data
-        dates = pd.date_range(start='2024-01-01', periods=100, freq='5T')
+        dates = pd.date_range(start='2024-01-01', periods=100, freq='5min')
         np.random.seed(42)
         
         # Generate realistic OHLCV data
@@ -53,6 +53,10 @@ def test_indicators():
         class MockDBManager:
             def save_indicator(self, symbol, timeframe, name, values):
                 logger.info(f"Would save {name} indicator: mean={np.mean(values):.2f}")
+            
+            def get_ohlcv(self, symbol, timeframe, start_time=None, end_time=None, limit=None):
+                # Return the mock OHLCV data we created above
+                return ohlcv
         
         db_manager = MockDBManager()
         calc = IndicatorCalculator(db_manager)

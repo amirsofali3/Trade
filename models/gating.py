@@ -89,21 +89,49 @@ class FeatureGatingModule(nn.Module):
             logger.warning("No features provided to gating module")
             return {}
         
-        # Concatenate all features for context
+        # Concatenate all features for context - fixed tensor shape handling
         all_features = []
         
         for group in self.group_names:
             if group in features_dict:
-                # Flatten features if multidimensional
-                flat_features = features_dict[group].view(1, -1)
+                # Get the raw feature tensor
+                raw_features = features_dict[group]
                 
-                # If completely flat, reshape to ensure 2D
-                if flat_features.dim() == 1:
-                    flat_features = flat_features.view(1, -1)
+                # Handle different tensor shapes properly
+                if len(raw_features.shape) == 1:
+                    # 1D tensor: reshape to (1, features)
+                    flat_features = raw_features.unsqueeze(0)
+                elif len(raw_features.shape) == 2:
+                    # 2D tensor: check if it's (batch, features) or (seq, features)
+                    if raw_features.size(0) == 1:
+                        # Already (1, features)
+                        flat_features = raw_features
+                    else:
+                        # (seq, features) - take mean over sequence
+                        flat_features = torch.mean(raw_features, dim=0, keepdim=True)
+                elif len(raw_features.shape) == 3:
+                    # 3D tensor: (batch, seq, features) - take mean over sequence dimension
+                    flat_features = torch.mean(raw_features, dim=1)
+                    if flat_features.size(0) > 1:
+                        # Multiple batches - take mean over batch too
+                        flat_features = torch.mean(flat_features, dim=0, keepdim=True)
+                else:
+                    # Higher dimensional - flatten completely then reshape
+                    total_elements = raw_features.numel()
+                    expected_dim = self.feature_groups[group]
+                    # Take only the expected number of features
+                    flat_features = raw_features.view(-1)[:expected_dim].unsqueeze(0)
                 
-                # Average over time dimension if present
-                if flat_features.size(0) > 1:
-                    flat_features = torch.mean(flat_features, dim=0, keepdim=True)
+                # Ensure the feature dimension matches expected
+                expected_dim = self.feature_groups[group]
+                if flat_features.size(1) != expected_dim:
+                    if flat_features.size(1) > expected_dim:
+                        # Truncate extra features
+                        flat_features = flat_features[:, :expected_dim]
+                    else:
+                        # Pad with zeros if needed
+                        padding = torch.zeros(1, expected_dim - flat_features.size(1))
+                        flat_features = torch.cat([flat_features, padding], dim=1)
                 
                 all_features.append(flat_features)
             else:
@@ -126,34 +154,77 @@ class FeatureGatingModule(nn.Module):
                 # Weak features get min_weight, strong features keep their strength
                 gates = torch.clamp(raw_gates, min=self.min_weight, max=1.0)
                 
-                # Ensure gates have right shape
-                if gates.size(-1) != self.feature_groups[group]:
-                    gates = gates[:, :self.feature_groups[group]]
+                # Ensure gates have right shape for the feature group
+                expected_dim = self.feature_groups[group]
+                if gates.size(-1) != expected_dim:
+                    if gates.size(-1) > expected_dim:
+                        gates = gates[:, :expected_dim]
+                    else:
+                        # Pad with min_weight if needed
+                        padding = torch.full((gates.size(0), expected_dim - gates.size(-1)), self.min_weight)
+                        gates = torch.cat([gates, padding], dim=1)
                 
-                # Reshape gates to match features
-                feature_shape = features_dict[group].shape
-                if len(feature_shape) > 2:  # For features with time dimension
-                    gates = gates.view(1, 1, -1).expand(-1, feature_shape[1], -1)
+                # Get original features and handle different shapes
+                original_features = features_dict[group]
                 
-                # Apply gates element-wise
-                gated_features[group] = features_dict[group] * gates
+                # Apply gates based on original feature shape
+                if len(original_features.shape) == 1:
+                    # 1D features: gates should be 1D too
+                    gates_to_apply = gates.squeeze(0)[:original_features.size(0)]
+                    gated_features[group] = original_features * gates_to_apply
+                    
+                elif len(original_features.shape) == 2:
+                    # 2D features: apply gates to last dimension
+                    if original_features.size(0) == 1:
+                        # (1, features) - apply gates directly
+                        gates_to_apply = gates
+                        if gates_to_apply.size(1) != original_features.size(1):
+                            gates_to_apply = gates_to_apply[:, :original_features.size(1)]
+                        gated_features[group] = original_features * gates_to_apply
+                    else:
+                        # (seq, features) - broadcast gates across sequence
+                        gates_to_apply = gates.expand(original_features.size(0), -1)
+                        if gates_to_apply.size(1) != original_features.size(1):
+                            gates_to_apply = gates_to_apply[:, :original_features.size(1)]
+                        gated_features[group] = original_features * gates_to_apply
+                        
+                elif len(original_features.shape) == 3:
+                    # 3D features: (batch, seq, features) - broadcast gates
+                    gates_to_apply = gates.unsqueeze(1).expand(-1, original_features.size(1), -1)
+                    if gates_to_apply.size(-1) != original_features.size(-1):
+                        gates_to_apply = gates_to_apply[:, :, :original_features.size(-1)]
+                    gated_features[group] = original_features * gates_to_apply
+                    
+                else:
+                    # Higher dimensional - apply to last dimension
+                    gate_shape = [1] * (len(original_features.shape) - 1) + [gates.size(-1)]
+                    gates_to_apply = gates.view(gate_shape).expand_as(original_features)
+                    gated_features[group] = original_features * gates_to_apply
                 
-                # Store current gates for monitoring
+                # Store current gates for monitoring (use squeezed version)
                 self.current_gates[group] = gates.detach().squeeze()
                 
                 # Update last update time
                 self.last_update_time[group] = datetime.now()
                 
                 # Log feature status for debugging
-                avg_weight = float(torch.mean(gates))
+                avg_weight = float(torch.mean(gates.detach()))
                 if avg_weight <= self.min_weight + 0.01:
                     logger.debug(f"Feature group {group} has low weight ({avg_weight:.3f}) - effectively disabled")
                 elif avg_weight >= 0.7:
                     logger.debug(f"Feature group {group} has high weight ({avg_weight:.3f}) - strongly active")
                 
             else:
-                # Pass group with zeros if missing
-                gated_features[group] = torch.zeros((1, self.feature_groups[group]))
+                # Pass group with zeros if missing - maintain original expected shape
+                expected_dim = self.feature_groups[group]
+                if group == 'ohlcv':
+                    gated_features[group] = torch.zeros((1, 20, expected_dim))
+                elif group == 'indicator':
+                    gated_features[group] = torch.zeros((1, 20, expected_dim))
+                elif group == 'tick_data':
+                    gated_features[group] = torch.zeros((1, 100, expected_dim))
+                else:
+                    gated_features[group] = torch.zeros((1, expected_dim))
         
         return gated_features
     
