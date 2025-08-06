@@ -419,6 +419,9 @@ class TradingBot:
                     signal.get('id')
                 )
                 
+                # Mark signal as executed and start cooldown
+                self.signal_generator.mark_signal_executed(signal_type, signal['timestamp'])
+                
                 logger.info(f"Processed BUY signal for {symbol} at {entry_price} (confidence: {confidence:.2f})")
                 
             elif signal_type == 'SELL':
@@ -427,6 +430,11 @@ class TradingBot:
                 
                 if not position:
                     logger.info(f"No position for {symbol}, ignoring sell signal")
+                    return
+                
+                # Check confidence threshold for SELL signal execution (70% required)
+                if confidence < 0.7:
+                    logger.info(f"SELL signal confidence {confidence:.4f} below execution threshold 0.7, keeping position")
                     return
                 
                 # Remove position from position manager
@@ -441,6 +449,9 @@ class TradingBot:
                     closed_position['exit_price'] = current_price
                     closed_position['pnl_percent'] = pnl_percent
                     closed_position['exit_reason'] = 'signal'
+                
+                # Mark signal as executed and start cooldown
+                self.signal_generator.mark_signal_executed(signal_type, signal['timestamp'])
                 
                 logger.info(f"Processed SELL signal for {symbol} at {current_price} (confidence: {confidence:.2f})")
             
@@ -481,6 +492,9 @@ class TradingBot:
                         closed_position['pnl_percent'] = pnl_percent
                         closed_position['exit_reason'] = 'stop_loss'
                         closed_positions.append(closed_position)
+                    
+                    # Mark as executed signal (stop loss is like a SELL signal)
+                    self.signal_generator.mark_signal_executed('SELL')
                     
                     # Log the event
                     logger.info(f"Stop loss triggered for {symbol} at {current_price}")
