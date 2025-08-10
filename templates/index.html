@@ -93,6 +93,11 @@
         }
         .feature-inactive {
             background-color: #dc3545;
+            animation-name: pulse-red;
+        }
+        .feature-weak {
+            background-color: #dc3545;
+            animation-name: pulse-red;
         }
         @keyframes pulse-green {
             0% {
@@ -103,6 +108,17 @@
             }
             100% {
                 box-shadow: 0 0 0 0 rgba(40, 167, 69, 0);
+            }
+        }
+        @keyframes pulse-red {
+            0% {
+                box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7);
+            }
+            70% {
+                box-shadow: 0 0 0 10px rgba(220, 53, 69, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(220, 53, 69, 0);
             }
         }
         .feature-weight {
@@ -117,6 +133,14 @@
         .feature-weight-bar {
             height: 100%;
             background-color: #28a745;
+        }
+        .feature-inactive .feature-weight-bar {
+            background-color: #dc3545;
+        }
+        .feature-details {
+            font-size: 0.8em;
+            color: #6c757d;
+            margin-top: 2px;
         }
         /* Technical Indicators Styling */
         .indicator-item {
@@ -345,6 +369,65 @@
         
         <div class="row mt-3">
             <div class="col-md-12">
+                <!-- New section for Confidence Validation -->
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        Signal Confidence Validation
+                        <i class="fas fa-sync refresh-btn" onclick="refreshConfidenceValidation()"></i>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="text-center">
+                                    <h4 class="text-success" id="overall-accuracy">0.0%</h4>
+                                    <small class="text-muted">Overall Accuracy</small>
+                                </div>
+                            </div>
+                            <div class="col-md-8">
+                                <div class="row">
+                                    <div class="col-4 text-center">
+                                        <div class="text-success" id="high-confidence-accuracy">0%</div>
+                                        <small class="text-muted">High Confidence</small>
+                                    </div>
+                                    <div class="col-4 text-center">
+                                        <div class="text-warning" id="medium-confidence-accuracy">0%</div>
+                                        <small class="text-muted">Medium Confidence</small>
+                                    </div>
+                                    <div class="col-4 text-center">
+                                        <div class="text-danger" id="low-confidence-accuracy">0%</div>
+                                        <small class="text-muted">Low Confidence</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mt-3">
+                            <h6>Recent Signal Validations</h6>
+                            <div class="table-responsive">
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Time</th>
+                                            <th>Signal</th>
+                                            <th>Confidence</th>
+                                            <th>Actual Result</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="confidence-validation-table">
+                                        <tr>
+                                            <td colspan="5" class="text-center">Loading validation data...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row mt-3">
+            <div class="col-md-12">
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         Settings
@@ -524,6 +607,102 @@
                 .catch(error => console.error('Error fetching performance:', error));
         }
 
+        // Refresh active features
+        function refreshActiveFeatures() {
+            fetch('/api/active-features')
+                .then(response => response.json())
+                .then(data => {
+                    const featuresList = document.getElementById('active-features-list');
+                    let html = '';
+                    
+                    // Add OHLCV
+                    if (data.ohlcv) {
+                        const info = data.ohlcv;
+                        const indicatorClass = info.weight <= 0.01 ? 'feature-weak' : (info.active ? 'feature-active' : 'feature-inactive');
+                        html += `
+                            <div class="list-group-item">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <span class="feature-indicator ${indicatorClass}"></span>
+                                        <strong>OHLCV Data</strong>
+                                        <span class="badge badge-${info.status === 'strong' ? 'success' : info.status === 'moderate' ? 'warning' : 'danger'} ms-2">${info.status}</span>
+                                    </div>
+                                    <div>
+                                        <span class="fw-bold">${info.weight_percentage.toFixed(1)}%</span>
+                                        <div class="feature-weight">
+                                            <div class="feature-weight-bar" style="width: ${info.weight_percentage}%"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="feature-details">
+                                    Impact: ${info.impact_score.toFixed(2)} | Last Value: $${info.last_value.toFixed(2)} | Updated: ${info.update_time}
+                                </div>
+                            </div>
+                        `;
+                    }
+                    
+                    // Add Individual Indicators
+                    if (data.indicators) {
+                        Object.entries(data.indicators).forEach(([name, info]) => {
+                            const indicatorClass = info.weight <= 0.01 ? 'feature-weak' : (info.active ? 'feature-active' : 'feature-inactive');
+                            html += `
+                                <div class="list-group-item">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <span class="feature-indicator ${indicatorClass}"></span>
+                                            <strong>${name.toUpperCase().replace('_', ' ')}</strong>
+                                            <span class="badge badge-${info.status === 'strong' ? 'success' : info.status === 'moderate' ? 'warning' : 'danger'} ms-2">${info.status}</span>
+                                        </div>
+                                        <div>
+                                            <span class="fw-bold">${info.weight_percentage.toFixed(1)}%</span>
+                                            <div class="feature-weight">
+                                                <div class="feature-weight-bar" style="width: ${info.weight_percentage}%"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="feature-details">
+                                        Impact: ${info.impact_score.toFixed(2)} | Last Value: ${info.last_value.toFixed(2)} | Updated: ${info.update_time}
+                                    </div>
+                                </div>
+                            `;
+                        });
+                    }
+                    
+                    // Add other feature groups
+                    ['sentiment', 'orderbook', 'tick_data'].forEach(featureName => {
+                        if (data[featureName]) {
+                            const info = data[featureName];
+                            const indicatorClass = info.weight <= 0.01 ? 'feature-weak' : (info.active ? 'feature-active' : 'feature-inactive');
+                            const displayName = featureName.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+                            
+                            html += `
+                                <div class="list-group-item">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <span class="feature-indicator ${indicatorClass}"></span>
+                                            <strong>${displayName}</strong>
+                                            <span class="badge badge-${info.status === 'strong' ? 'success' : info.status === 'moderate' ? 'warning' : 'danger'} ms-2">${info.status}</span>
+                                        </div>
+                                        <div>
+                                            <span class="fw-bold">${info.weight_percentage.toFixed(1)}%</span>
+                                            <div class="feature-weight">
+                                                <div class="feature-weight-bar" style="width: ${info.weight_percentage}%"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="feature-details">
+                                        Impact: ${info.impact_score.toFixed(2)} | Last Value: ${info.last_value.toFixed(2)} | Updated: ${info.update_time}
+                                    </div>
+                                </div>
+                            `;
+                        }
+                    });
+                    
+                    featuresList.innerHTML = html || '<div class="list-group-item">No features available</div>';
+                })
+                .catch(error => console.error('Error fetching active features:', error));
+        }
+
         // Refresh technical indicators
         function refreshTechnicalIndicators() {
             fetch('/api/active-features')
@@ -534,7 +713,7 @@
                     
                     // Process indicators
                     if (data.indicators) {
-                        let indicatorHtml = '<div class="col-12"><h6>Individual Technical Indicators</h6></div>';
+                        let indicatorHtml = '<div class="col-12"><h6>Live Technical Indicators</h6></div>';
                         
                         // Sort indicators by weight (descending)
                         const sortedIndicators = Object.entries(data.indicators)
@@ -542,19 +721,31 @@
                         
                         let colCount = 0;
                         sortedIndicators.forEach(([name, info]) => {
-                            if (colCount % 3 === 0) {
+                            if (colCount % 3 === 0 && colCount > 0) {
                                 indicatorHtml += '<div class="w-100"></div>';
                             }
                             
-                            const weight = info.weight * 100;
-                            const status = info.status || 'moderate';
+                            const weight = info.weight_percentage;
+                            const status = info.status;
                             const statusClass = `indicator-${status}`;
+                            const isActive = info.active;
                             
                             indicatorHtml += `
                                 <div class="col-md-4 mb-2">
                                     <div class="indicator-item ${statusClass}">
-                                        <div class="indicator-name">${name}</div>
-                                        <div class="indicator-value">${weight.toFixed(1)}%</div>
+                                        <div class="d-flex justify-content-between align-items-center mb-1">
+                                            <div class="indicator-name">${name.replace('_', ' ').toUpperCase()}</div>
+                                            <span class="feature-indicator ${isActive ? 'feature-active' : 'feature-weak'}"></span>
+                                        </div>
+                                        <div class="d-flex justify-content-between">
+                                            <small class="text-muted">Value: ${info.last_value.toFixed(2)}</small>
+                                            <div class="indicator-value">${weight.toFixed(1)}%</div>
+                                        </div>
+                                        <div class="progress mt-1" style="height: 4px;">
+                                            <div class="progress-bar ${status === 'strong' ? 'bg-success' : status === 'moderate' ? 'bg-warning' : 'bg-danger'}" 
+                                                 style="width: ${Math.min(weight, 100)}%"></div>
+                                        </div>
+                                        <small class="text-muted">Impact: ${info.impact_score.toFixed(2)} | ${info.update_time}</small>
                                     </div>
                                 </div>
                             `;
@@ -564,164 +755,26 @@
                         html += indicatorHtml;
                     }
                     
-                    // Process candle patterns if available
-                    if (data.candle_patterns) {
-                        let patternHtml = '<div class="col-12 mt-3"><h6>Candlestick Patterns</h6></div>';
-                        
-                        // Sort patterns by weight (descending)
-                        const sortedPatterns = Object.entries(data.candle_patterns)
-                            .sort(([,a], [,b]) => b.weight - a.weight);
-                        
-                        let colCount = 0;
-                        sortedPatterns.forEach(([name, info]) => {
-                            if (colCount % 3 === 0) {
-                                patternHtml += '<div class="w-100"></div>';
-                            }
-                            
-                            const weight = info.weight * 100;
-                            const status = info.status || 'moderate';
-                            const statusClass = `indicator-${status}`;
-                            
-                            patternHtml += `
-                                <div class="col-md-4 mb-2">
-                                    <div class="indicator-item ${statusClass}">
-                                        <div class="indicator-name">${name}</div>
-                                        <div class="indicator-value">${weight.toFixed(1)}%</div>
-                                    </div>
-                                </div>
-                            `;
-                            colCount++;
-                        });
-                        
-                        html += patternHtml;
-                    }
+                    // Add summary statistics
+                    const totalIndicators = data.indicators ? Object.keys(data.indicators).length : 0;
+                    const activeIndicators = data.indicators ? Object.values(data.indicators).filter(ind => ind.active).length : 0;
+                    const weakIndicators = data.indicators ? Object.values(data.indicators).filter(ind => ind.weight <= 0.01).length : 0;
                     
-                    // Show summary of weak features
-                    let weakCount = 0;
-                    let strongCount = 0;
-                    
-                    // Count features by status
-                    ['indicators', 'candle_patterns'].forEach(groupName => {
-                        if (data[groupName]) {
-                            Object.values(data[groupName]).forEach(info => {
-                                if (info.status === 'weak') weakCount++;
-                                else if (info.status === 'strong') strongCount++;
-                            });
-                        }
-                    });
-                    
-                    if (weakCount > 0 || strongCount > 0) {
-                        html += `
-                            <div class="col-12 mt-3">
-                                <div class="alert alert-info">
-                                    <strong>Feature Summary:</strong> 
-                                    ${strongCount} strong features, 
-                                    ${weakCount} weak features (≤ 1.1% impact)
-                                </div>
+                    html += `
+                        <div class="col-12 mt-3">
+                            <div class="alert alert-info">
+                                <strong>Indicators Summary:</strong> 
+                                ${totalIndicators} total indicators, 
+                                ${activeIndicators} active, 
+                                ${weakIndicators} weak (≤ 1% impact)
+                                | Last Update: ${new Date().toLocaleTimeString()}
                             </div>
-                        `;
-                    }
+                        </div>
+                    `;
                     
                     container.innerHTML = html || '<div class="col-12"><p class="text-muted">No technical indicators available</p></div>';
                 })
                 .catch(error => console.error('Error fetching technical indicators:', error));
-        }
-            fetch('/api/active-features')
-                .then(response => response.json())
-                .then(data => {
-                    const featuresList = document.getElementById('active-features-list');
-                    let html = '';
-                    
-                    // Add OHLCV
-                    if (data.ohlcv) {
-                        const isActive = data.ohlcv.active;
-                        const weight = data.ohlcv.weight * 100;
-                        html += `
-                            <div class="list-group-item d-flex justify-content-between align-items-center">
-                                <div>
-                                    <span class="feature-indicator ${isActive ? 'feature-active' : 'feature-inactive'}"></span>
-                                    OHLCV
-                                </div>
-                                <div class="feature-weight">
-                                    <div class="feature-weight-bar" style="width: ${weight}%"></div>
-                                </div>
-                            </div>
-                        `;
-                    }
-                    
-                    // Add Indicators
-                    if (data.indicators) {
-                        Object.entries(data.indicators).forEach(([name, info]) => {
-                            const isActive = info.active;
-                            const weight = info.weight * 100;
-                            html += `
-                                <div class="list-group-item d-flex justify-content-between align-items-center">
-                                    <div>
-                                        <span class="feature-indicator ${isActive ? 'feature-active' : 'feature-inactive'}"></span>
-                                        ${name.toUpperCase()}
-                                    </div>
-                                    <div class="feature-weight">
-                                        <div class="feature-weight-bar" style="width: ${weight}%"></div>
-                                    </div>
-                                </div>
-                            `;
-                        });
-                    }
-                    
-                    // Add Sentiment
-                    if (data.sentiment) {
-                        const isActive = data.sentiment.active;
-                        const weight = data.sentiment.weight * 100;
-                        html += `
-                            <div class="list-group-item d-flex justify-content-between align-items-center">
-                                <div>
-                                    <span class="feature-indicator ${isActive ? 'feature-active' : 'feature-inactive'}"></span>
-                                    Sentiment
-                                </div>
-                                <div class="feature-weight">
-                                    <div class="feature-weight-bar" style="width: ${weight}%"></div>
-                                </div>
-                            </div>
-                        `;
-                    }
-                    
-                    // Add OrderBook
-                    if (data.orderbook) {
-                        const isActive = data.orderbook.active;
-                        const weight = data.orderbook.weight * 100;
-                        html += `
-                            <div class="list-group-item d-flex justify-content-between align-items-center">
-                                <div>
-                                    <span class="feature-indicator ${isActive ? 'feature-active' : 'feature-inactive'}"></span>
-                                    OrderBook
-                                </div>
-                                <div class="feature-weight">
-                                    <div class="feature-weight-bar" style="width: ${weight}%"></div>
-                                </div>
-                            </div>
-                        `;
-                    }
-                    
-                    // Add Tick Data
-                    if (data.tick_data) {
-                        const isActive = data.tick_data.active;
-                        const weight = data.tick_data.weight * 100;
-                        html += `
-                            <div class="list-group-item d-flex justify-content-between align-items-center">
-                                <div>
-                                    <span class="feature-indicator ${isActive ? 'feature-active' : 'feature-inactive'}"></span>
-                                    Tick Data
-                                </div>
-                                <div class="feature-weight">
-                                    <div class="feature-weight-bar" style="width: ${weight}%"></div>
-                                </div>
-                            </div>
-                        `;
-                    }
-                    
-                    featuresList.innerHTML = html || '<div class="list-group-item">No features available</div>';
-                })
-                .catch(error => console.error('Error fetching active features:', error));
         }
 
         // Refresh chart
@@ -791,51 +844,136 @@
                         marketRegime.className = '';
                     }
                     
-                    // Update feature importance
-                    if (data.feature_importance) {
-                        const fi = data.feature_importance;
-                        const total = Object.values(fi).reduce((a, b) => a + b, 0);
+                    // Update detailed feature importance
+                    if (data.detailed_feature_importance) {
+                        const dfi = data.detailed_feature_importance;
                         
-                        // Update progress bars
-                        if (fi.ohlcv !== undefined) {
-                            const percent = (fi.ohlcv / total * 100).toFixed(1);
+                        // Update progress bars based on actual data
+                        if (dfi.ohlcv) {
+                            const percent = dfi.ohlcv.percentage.toFixed(1);
                             document.getElementById('ohlcv-importance').style.width = `${percent}%`;
                             document.getElementById('ohlcv-importance').textContent = `OHLCV: ${percent}%`;
                         }
                         
-                        if (fi.indicator !== undefined) {
-                            const percent = (fi.indicator / total * 100).toFixed(1);
-                            document.getElementById('indicator-importance').style.width = `${percent}%`;
-                            document.getElementById('indicator-importance').textContent = `Indicators: ${percent}%`;
-                        }
-                        
-                        if (fi.sentiment !== undefined) {
-                            const percent = (fi.sentiment / total * 100).toFixed(1);
+                        if (dfi.sentiment) {
+                            const percent = dfi.sentiment.percentage.toFixed(1);
                             document.getElementById('sentiment-importance').style.width = `${percent}%`;
                             document.getElementById('sentiment-importance').textContent = `Sentiment: ${percent}%`;
                         }
                         
-                        if (fi.orderbook !== undefined) {
-                            const percent = (fi.orderbook / total * 100).toFixed(1);
+                        if (dfi.orderbook) {
+                            const percent = dfi.orderbook.percentage.toFixed(1);
                             document.getElementById('orderbook-importance').style.width = `${percent}%`;
                             document.getElementById('orderbook-importance').textContent = `OrderBook: ${percent}%`;
                         }
+                        
+                        if (dfi.tick_data) {
+                            const percent = dfi.tick_data.percentage.toFixed(1);
+                            document.getElementById('indicator-importance').style.width = `${percent}%`;
+                            document.getElementById('indicator-importance').textContent = `Indicators: ${percent}%`;
+                        }
                     }
                     
-                    // Update model update counts
-                    if (data.update_counts) {
-                        const updateCounts = document.getElementById('update-counts');
-                        let html = '<strong>Model Updates:</strong><ul>';
-                        
-                        for (const [model, count] of Object.entries(data.update_counts)) {
-                            html += `<li>${model}: ${count} updates</li>`;
-                        }
-                        
-                        html += '</ul>';
-                        updateCounts.innerHTML = html;
+                    // Update model update information with performance metrics
+                    const updateCounts = document.getElementById('update-counts');
+                    let html = '<strong>Model Performance:</strong>';
+                    
+                    if (data.performance_metrics) {
+                        const pm = data.performance_metrics;
+                        html += `
+                            <div class="row mt-2">
+                                <div class="col-6">
+                                    <small class="text-muted">Training Accuracy:</small> 
+                                    <span class="fw-bold text-success">${(pm.training_accuracy * 100).toFixed(1)}%</span>
+                                </div>
+                                <div class="col-6">
+                                    <small class="text-muted">Validation Accuracy:</small> 
+                                    <span class="fw-bold text-primary">${(pm.validation_accuracy * 100).toFixed(1)}%</span>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-6">
+                                    <small class="text-muted">Active Features:</small> 
+                                    <span class="fw-bold">${pm.feature_count}</span>
+                                </div>
+                                <div class="col-6">
+                                    <small class="text-muted">Model Version:</small> 
+                                    <span class="fw-bold">${pm.model_version}</span>
+                                </div>
+                            </div>
+                        `;
                     }
+                    
+                    // Add recent updates
+                    if (data.recent_updates) {
+                        html += '<div class="mt-2"><strong>Recent Updates:</strong><ul class="mb-0">';
+                        data.recent_updates.slice(0, 3).forEach(update => {
+                            const time = new Date(update.timestamp).toLocaleTimeString();
+                            html += `<li><small>${time} - ${update.type.replace('_', ' ')}</small></li>`;
+                        });
+                        html += '</ul></div>';
+                    }
+                    
+                    updateCounts.innerHTML = html;
                 })
                 .catch(error => console.error('Error fetching model stats:', error));
+        }
+
+        // Refresh confidence validation
+        function refreshConfidenceValidation() {
+            fetch('/api/confidence-validation')
+                .then(response => response.json())
+                .then(data => {
+                    // Update overall accuracy
+                    document.getElementById('overall-accuracy').textContent = (data.overall_accuracy * 100).toFixed(1) + '%';
+                    
+                    // Update confidence band accuracies
+                    const highCorrect = data.validation_summary.high_confidence_correct;
+                    const highWrong = data.validation_summary.high_confidence_wrong;
+                    const highTotal = highCorrect + highWrong;
+                    const highAccuracy = highTotal > 0 ? (highCorrect / highTotal * 100).toFixed(0) + '%' : '0%';
+                    document.getElementById('high-confidence-accuracy').textContent = highAccuracy;
+                    
+                    const mediumCorrect = data.validation_summary.medium_confidence_correct;
+                    const mediumWrong = data.validation_summary.medium_confidence_wrong;
+                    const mediumTotal = mediumCorrect + mediumWrong;
+                    const mediumAccuracy = mediumTotal > 0 ? (mediumCorrect / mediumTotal * 100).toFixed(0) + '%' : '0%';
+                    document.getElementById('medium-confidence-accuracy').textContent = mediumAccuracy;
+                    
+                    const lowCorrect = data.validation_summary.low_confidence_correct;
+                    const lowWrong = data.validation_summary.low_confidence_wrong;
+                    const lowTotal = lowCorrect + lowWrong;
+                    const lowAccuracy = lowTotal > 0 ? (lowCorrect / lowTotal * 100).toFixed(0) + '%' : '0%';
+                    document.getElementById('low-confidence-accuracy').textContent = lowAccuracy;
+                    
+                    // Update validation table
+                    const tableBody = document.getElementById('confidence-validation-table');
+                    if (data.recent_validations && data.recent_validations.length > 0) {
+                        let html = '';
+                        
+                        data.recent_validations.slice(-10).forEach(validation => {
+                            const statusClass = validation.actual_correct ? 'text-success' : 'text-danger';
+                            const statusIcon = validation.actual_correct ? '✓' : '✗';
+                            const confidenceClass = validation.confidence_band === 'high' ? 'text-success' : 
+                                                  validation.confidence_band === 'medium' ? 'text-warning' : 'text-danger';
+                            
+                            html += `
+                                <tr>
+                                    <td>${formatDate(validation.timestamp)}</td>
+                                    <td><span class="badge bg-${validation.signal === 'BUY' ? 'success' : validation.signal === 'SELL' ? 'danger' : 'secondary'}">${validation.signal}</span></td>
+                                    <td><span class="${confidenceClass}">${(validation.predicted_confidence * 100).toFixed(1)}%</span></td>
+                                    <td>${formatCurrency(validation.price)}</td>
+                                    <td class="${statusClass}">${statusIcon} ${validation.actual_correct ? 'Correct' : 'Wrong'}</td>
+                                </tr>
+                            `;
+                        });
+                        
+                        tableBody.innerHTML = html;
+                    } else {
+                        tableBody.innerHTML = '<tr><td colspan="5" class="text-center">No validation data available</td></tr>';
+                    }
+                })
+                .catch(error => console.error('Error fetching confidence validation:', error));
         }
         
         // Refresh settings
@@ -937,6 +1075,7 @@
             refreshModelStats();
             refreshActiveFeatures();
             refreshTechnicalIndicators();  // Add technical indicators refresh
+            refreshConfidenceValidation();  // Add confidence validation refresh
             
             // Set up periodic refreshes
             setInterval(checkStatus, 10000);                    // Check status every 10s
@@ -947,6 +1086,7 @@
             setInterval(refreshModelStats, 30000);              // Refresh model stats every 30s
             setInterval(refreshActiveFeatures, 5000);           // Refresh active features every 5s
             setInterval(refreshTechnicalIndicators, 5000);      // Refresh technical indicators every 5s
+            setInterval(refreshConfidenceValidation, 15000);    // Refresh confidence validation every 15s
         }
         
         // Run initialization when page loads
