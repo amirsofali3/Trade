@@ -194,7 +194,7 @@ class FeatureGatingModule(nn.Module):
             y_clean = y[valid_samples]
             
             if len(X_clean) < 10:
-                logger.warning(f"Very limited clean samples ({len(X_clean)}) - using simplified feature selection")
+                logger.info(f"RFE samples={len(X_clean)} (<10 threshold) → using fallback correlation ranking")
                 # For very limited data, use correlation-based selection
                 return self._perform_correlation_based_selection(X_clean, y_clean, feature_names)
             
@@ -278,6 +278,9 @@ class FeatureGatingModule(nn.Module):
             self.rfe_performed = True
             self.rfe_model = rfe
             
+            # Persist RFE results to JSON file
+            self._save_rfe_results_to_file()
+            
             logger.info(f"🚀 RFE completed! Selected {len([f for f in self.rfe_selected_features.values() if f['selected']])} features")
             
             return self.rfe_selected_features
@@ -320,7 +323,8 @@ class FeatureGatingModule(nn.Module):
                 }
                 self.rfe_feature_rankings[feature_name] = 1 if is_selected else 2
             
-            logger.info(f"Selected {len(top_indices)} features using correlation-based selection")
+            logger.info(f"RFE fallback selected {len(top_indices)} features (method=correlation)")
+            logger.info(f"RFE fallback correlation scores: min={min(correlations):.3f}, max={max(correlations):.3f}")
             
             # Update feature performance tracking
             for group_name in self.feature_performance:
@@ -339,6 +343,10 @@ class FeatureGatingModule(nn.Module):
                         self.feature_performance[group_name]['rfe_rank'] = self.rfe_selected_features[group_name]['rank']
             
             self.rfe_performed = True
+            
+            # Persist RFE results to JSON file  
+            self._save_rfe_results_to_file()
+            
             return self.rfe_selected_features
             
         except Exception as e:
@@ -388,6 +396,51 @@ class FeatureGatingModule(nn.Module):
                 weights[group_name] = torch.full((group_dim,), weight_val)
         
         return weights
+    
+    def _log_rfe_weight_application(self, rfe_weights):
+        """Log the application of RFE weights in strong/medium/weak categories"""
+        strong_count = medium_count = weak_count = 0
+        
+        for group_name, group_weights in rfe_weights.items():
+            if isinstance(group_weights, torch.Tensor):
+                weights_np = group_weights.detach().numpy() if group_weights.requires_grad else group_weights.numpy()
+                
+                # Count weight categories
+                strong = np.sum((weights_np >= 0.7) & (weights_np <= 0.9))
+                medium = np.sum((weights_np >= 0.3) & (weights_np < 0.7))
+                weak = np.sum(weights_np <= self.min_weight + 0.01)
+                
+                strong_count += strong
+                medium_count += medium
+                weak_count += weak
+        
+        logger.info(f"Applied RFE weights: strong={strong_count}, medium={medium_count}, weak={weak_count}")
+    
+    def _save_rfe_results_to_file(self):
+        """Save RFE results to external JSON file"""
+        try:
+            import os
+            import json
+            from datetime import datetime
+            
+            rfe_data = {
+                'timestamp': datetime.now().isoformat(),
+                'method': 'RandomForestRFE' if hasattr(self, 'rfe_model') else 'correlation',
+                'n_features_selected': len([f for f in self.rfe_selected_features.values() if f['selected']]),
+                'total_features': len(self.rfe_selected_features),
+                'selected_features': {k: v for k, v in self.rfe_selected_features.items() if v['selected']},
+                'feature_rankings': self.rfe_feature_rankings,
+                'rfe_n_features_target': self.rfe_n_features
+            }
+            
+            rfe_file = 'rfe_results.json'
+            with open(rfe_file, 'w', encoding='utf-8') as f:
+                json.dump(rfe_data, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"RFE results saved to {rfe_file}")
+            
+        except Exception as e:
+            logger.error(f"Failed to save RFE results: {str(e)}")
     
     def forward(self, features_dict):
         """
@@ -462,6 +515,10 @@ class FeatureGatingModule(nn.Module):
         
         # Apply gates to each group with enhanced RFE-based logic
         gated_features = {}
+        
+        # Log RFE weight application if performed
+        if self.rfe_performed and rfe_weights:
+            self._log_rfe_weight_application(rfe_weights)
         
         for group in self.group_names:
             if group in features_dict:
