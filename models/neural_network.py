@@ -290,20 +290,21 @@ class MarketTransformer(nn.Module):
 
 class OnlineLearner:
     """
-    Enhanced online learning mechanism with trade outcome feedback
+    Enhanced online learning mechanism with trade outcome feedback and semantic versioning
     
     Features:
     - Learns from trade outcomes (profit/loss, accuracy)
     - Adjusts feature weights based on success rates
     - Implements continuous model improvement
-    - Saves learning progress for recovery
+    - Saves learning progress with semantic versioning (major.minor.patch)
     """
     
     def __init__(self, model, gating_module=None, optimizer_cls=torch.optim.Adam, 
                 lr=1e-4, buffer_size=1000, batch_size=32,
-                update_interval=3600, save_dir='saved_models'):
+                update_interval=3600, save_dir='saved_models', 
+                initial_version="1.0.0"):
         """
-        Initialize enhanced online learner
+        Initialize enhanced online learner with version tracking
         
         Args:
             model: Neural network model
@@ -314,6 +315,7 @@ class OnlineLearner:
             batch_size: Batch size for training
             update_interval: Time interval between updates in seconds
             save_dir: Directory to save model checkpoints
+            initial_version: Initial model version (semantic versioning)
         """
         self.model = model
         self.gating_module = gating_module
@@ -322,6 +324,11 @@ class OnlineLearner:
         self.batch_size = batch_size
         self.update_interval = update_interval
         self.save_dir = save_dir
+        
+        # Version tracking
+        self.model_version = initial_version
+        self.version_history = []
+        self.last_major_update = datetime.now()
         
         # Create experience buffer with enhanced data
         self.experience_buffer = {
@@ -346,6 +353,11 @@ class OnlineLearner:
         self.updates_counter = 0
         self.last_update_time = datetime.now()
         self.learning_rate_schedule = lr
+        
+        # Performance tracking for version bumping
+        self.performance_window = []  # Track recent performance
+        self.performance_threshold_major = 0.05  # 5% improvement for major version
+        self.performance_threshold_minor = 0.02  # 2% improvement for minor version
         
         # Make sure save directory exists
         if not os.path.exists(save_dir):
@@ -628,56 +640,207 @@ class OnlineLearner:
         except Exception as e:
             logger.error(f"Error performing update: {str(e)}")
     
-    def _save_model(self):
-        """Save model checkpoint with learning progress"""
+    def _increment_version(self, version_type='patch'):
+        """
+        Increment model version using semantic versioning
+        
+        Args:
+            version_type: 'major', 'minor', or 'patch'
+        """
         try:
-            checkpoint_path = os.path.join(self.save_dir, f"model_checkpoint_{self.updates_counter}.pt")
+            major, minor, patch = map(int, self.model_version.split('.'))
             
-            # Save model state with learning data
+            if version_type == 'major':
+                major += 1
+                minor = 0
+                patch = 0
+                self.last_major_update = datetime.now()
+                logger.info(f"🎯 Major model improvement! Version bump: {self.model_version} → {major}.{minor}.{patch}")
+            elif version_type == 'minor':
+                minor += 1
+                patch = 0
+                logger.info(f"📈 Minor model improvement! Version bump: {self.model_version} → {major}.{minor}.{patch}")
+            else:  # patch
+                patch += 1
+                logger.debug(f"🔧 Model patch update: {self.model_version} → {major}.{minor}.{patch}")
+            
+            # Update version and track in history
+            old_version = self.model_version
+            self.model_version = f"{major}.{minor}.{patch}"
+            self.version_history.append({
+                'from_version': old_version,
+                'to_version': self.model_version,
+                'timestamp': datetime.now().isoformat(),
+                'update_type': version_type,
+                'updates_count': self.updates_counter
+            })
+            
+        except Exception as e:
+            logger.error(f"Error incrementing version: {str(e)}")
+    
+    def _should_increment_version(self):
+        """
+        Check if model version should be incremented based on performance
+        
+        Returns:
+            String indicating version increment type or None
+        """
+        if len(self.performance_window) < 10:
+            return None
+        
+        # Calculate recent performance trend
+        recent_performance = np.mean(self.performance_window[-5:])
+        older_performance = np.mean(self.performance_window[-10:-5])
+        
+        if older_performance == 0:
+            return None
+        
+        improvement = (recent_performance - older_performance) / abs(older_performance)
+        
+        # Check for major improvement (RFE results, significant accuracy gain)
+        if (improvement >= self.performance_threshold_major or 
+            (self.gating_module and self.gating_module.rfe_performed and 
+             (datetime.now() - self.last_major_update).days >= 1)):
+            return 'major'
+        
+        # Check for minor improvement
+        elif improvement >= self.performance_threshold_minor:
+            return 'minor'
+        
+        # Default patch increment every few updates
+        elif self.updates_counter % 10 == 0:
+            return 'patch'
+        
+        return None
+
+    def _save_model(self):
+        """Save model checkpoint with semantic versioning and learning progress"""
+        try:
+            # Check if version should be incremented
+            version_increment = self._should_increment_version()
+            if version_increment:
+                self._increment_version(version_increment)
+            
+            # Create checkpoint filename with version
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            checkpoint_filename = f"model_v{self.model_version}_{timestamp}.pt"
+            checkpoint_path = os.path.join(self.save_dir, checkpoint_filename)
+            
+            # Also create a "latest" symlink/copy
+            latest_path = os.path.join(self.save_dir, "model_latest.pt")
+            
+            # Save model state with enhanced metadata
             checkpoint_data = {
+                'model_version': self.model_version,
+                'version_history': self.version_history,
                 'model_state_dict': self.model.state_dict(),
                 'optimizer_state_dict': self.optimizer.state_dict(),
                 'updates_counter': self.updates_counter,
-                'timestamp': datetime.now().strftime('%Y-%m-%d_%H-%M-%S'),
+                'timestamp': datetime.now().isoformat(),
                 'trade_outcomes': self.trade_outcomes,
                 'learning_summary': self.get_learning_summary(),
-                'gating_performance': self.gating_module.get_feature_performance_summary() if self.gating_module else {}
+                'gating_performance': self.gating_module.get_feature_performance_summary() if self.gating_module else {},
+                'rfe_results': {
+                    'rfe_performed': self.gating_module.rfe_performed if self.gating_module else False,
+                    'selected_features': self.gating_module.rfe_selected_features if self.gating_module else {},
+                    'rfe_summary': self.gating_module.get_rfe_summary() if self.gating_module else {}
+                },
+                'performance_metrics': {
+                    'recent_performance': self.performance_window[-10:] if len(self.performance_window) >= 10 else self.performance_window,
+                    'success_rate': self.trade_outcomes['successful_trades'] / max(1, self.trade_outcomes['successful_trades'] + self.trade_outcomes['failed_trades']) * 100,
+                    'total_profit_loss': self.trade_outcomes['total_profit'] - self.trade_outcomes['total_loss']
+                }
             }
             
             torch.save(checkpoint_data, checkpoint_path)
+            torch.save(checkpoint_data, latest_path)  # Also save as latest
             
-            # Keep only the latest 5 checkpoints
-            checkpoint_files = [f for f in os.listdir(self.save_dir) if f.startswith('model_checkpoint_')]
-            if len(checkpoint_files) > 5:
-                checkpoint_files.sort(key=lambda f: int(f.split('_')[-1].split('.')[0]))
-                for old_file in checkpoint_files[:-5]:
+            # Keep only the latest 10 versioned checkpoints
+            checkpoint_files = [f for f in os.listdir(self.save_dir) if f.startswith('model_v') and f.endswith('.pt')]
+            if len(checkpoint_files) > 10:
+                # Sort by modification time
+                checkpoint_files_with_time = [(f, os.path.getmtime(os.path.join(self.save_dir, f))) 
+                                            for f in checkpoint_files]
+                checkpoint_files_with_time.sort(key=lambda x: x[1])
+                
+                # Remove oldest files
+                for old_file, _ in checkpoint_files_with_time[:-10]:
                     try:
                         os.remove(os.path.join(self.save_dir, old_file))
                     except:
                         pass
             
-            logger.info(f"Enhanced model saved to {checkpoint_path}")
+            logger.info(f"✅ Model v{self.model_version} saved to {checkpoint_filename}")
+            logger.info(f"📊 Updates: {self.updates_counter}, Success Rate: {checkpoint_data['performance_metrics']['success_rate']:.1f}%")
         
         except Exception as e:
             logger.error(f"Error saving model: {str(e)}")
     
     def load_model(self, checkpoint_path):
         """
-        Load model checkpoint with learning progress
+        Load model checkpoint with learning progress and version info
         
         Args:
             checkpoint_path: Path to checkpoint file
+            
+        Returns:
+            Boolean indicating success
         """
         try:
             checkpoint = torch.load(checkpoint_path)
             
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            self.updates_counter = checkpoint['updates_counter']
+            self.updates_counter = checkpoint.get('updates_counter', 0)
+            
+            # Load version information
+            self.model_version = checkpoint.get('model_version', '1.0.0')
+            self.version_history = checkpoint.get('version_history', [])
             
             # Load learning progress if available
             if 'trade_outcomes' in checkpoint:
                 self.trade_outcomes = checkpoint['trade_outcomes']
+            
+            # Load RFE results if available
+            if 'rfe_results' in checkpoint and self.gating_module:
+                rfe_data = checkpoint['rfe_results']
+                if rfe_data.get('rfe_performed', False):
+                    self.gating_module.rfe_performed = True
+                    self.gating_module.rfe_selected_features = rfe_data.get('selected_features', {})
+            
+            # Load performance metrics
+            if 'performance_metrics' in checkpoint:
+                perf_data = checkpoint['performance_metrics']
+                self.performance_window = perf_data.get('recent_performance', [])
+            
+            logger.info(f"✅ Model v{self.model_version} loaded from {os.path.basename(checkpoint_path)}")
+            logger.info(f"📈 Updates: {self.updates_counter}, RFE: {'✓' if self.gating_module and self.gating_module.rfe_performed else '✗'}")
+            
+            return True
+        
+        except Exception as e:
+            logger.error(f"Error loading model from {checkpoint_path}: {str(e)}")
+            return False
+    
+    def get_version_info(self):
+        """
+        Get detailed version information
+        
+        Returns:
+            Dictionary with version details
+        """
+        return {
+            'current_version': self.model_version,
+            'updates_count': self.updates_counter,
+            'version_history': self.version_history,
+            'last_major_update': self.last_major_update.isoformat() if hasattr(self, 'last_major_update') else None,
+            'rfe_performed': self.gating_module.rfe_performed if self.gating_module else False,
+            'performance_trend': {
+                'recent_avg': np.mean(self.performance_window[-5:]) if len(self.performance_window) >= 5 else 0,
+                'overall_avg': np.mean(self.performance_window) if self.performance_window else 0,
+                'data_points': len(self.performance_window)
+            }
+        }
                 logger.info(f"Loaded learning progress: {self.get_learning_summary()}")
             
             # Load gating performance if available
