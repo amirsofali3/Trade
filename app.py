@@ -93,6 +93,9 @@ data_store = {
 # Message queue for communication with the trading bot
 bot_message_queue = queue.Queue()
 
+# Global bot instance reference for accessing RFE and feature data
+bot_instance = None
+
 # Routes
 @app.route('/')
 def index():
@@ -185,6 +188,119 @@ def active_features():
                 }
     
     return jsonify(enhanced_features)
+
+@app.route('/api/rfe-analysis')
+def rfe_analysis():
+    """Return detailed RFE analysis results"""
+    if bot_instance and hasattr(bot_instance, 'gating'):
+        gating = bot_instance.gating
+        
+        if hasattr(gating, 'rfe_selected_features') and gating.rfe_selected_features:
+            # Organize by feature groups
+            analysis_results = {
+                'rfe_performed': getattr(gating, 'rfe_performed', False),
+                'total_features_analyzed': len(gating.rfe_selected_features),
+                'selected_features_count': len([f for f in gating.rfe_selected_features.values() if f['selected']]),
+                'feature_breakdown': {},
+                'top_features': [],
+                'weak_features': [],
+                'selection_summary': {},
+                'feature_impact': {}
+            }
+            
+            # Categorize features by group
+            for feature_name, feature_data in gating.rfe_selected_features.items():
+                group = feature_name.split('.')[0] if '.' in feature_name else 'other'
+                
+                if group not in analysis_results['feature_breakdown']:
+                    analysis_results['feature_breakdown'][group] = {
+                        'total': 0,
+                        'selected': 0,
+                        'features': []
+                    }
+                
+                analysis_results['feature_breakdown'][group]['total'] += 1
+                if feature_data['selected']:
+                    analysis_results['feature_breakdown'][group]['selected'] += 1
+                
+                feature_info = {
+                    'name': feature_name,
+                    'selected': feature_data['selected'],
+                    'rank': feature_data['rank'],
+                    'importance': feature_data['importance'],
+                    'weight': feature_data['importance'] if feature_data['selected'] else 0.01
+                }
+                
+                analysis_results['feature_breakdown'][group]['features'].append(feature_info)
+                
+                # Top features (selected with high importance)
+                if feature_data['selected'] and feature_data['importance'] > 0.1:
+                    analysis_results['top_features'].append(feature_info)
+                
+                # Weak features (not selected or low importance)
+                elif not feature_data['selected'] or feature_data['importance'] <= 0.05:
+                    analysis_results['weak_features'].append(feature_info)
+                
+                # Feature impact summary
+                analysis_results['feature_impact'][feature_name] = {
+                    'impact_level': 'high' if feature_data['importance'] > 0.1 else 'medium' if feature_data['importance'] > 0.05 else 'low',
+                    'weight_assigned': feature_data['importance'] if feature_data['selected'] else 0.01,
+                    'selection_reason': 'RFE selected' if feature_data['selected'] else 'Weak feature - minimal weight'
+                }
+            
+            # Sort top features by importance
+            analysis_results['top_features'].sort(key=lambda x: x['importance'], reverse=True)
+            analysis_results['weak_features'].sort(key=lambda x: x['importance'])
+            
+            # Selection summary
+            analysis_results['selection_summary'] = {
+                'methodology': 'Random Forest RFE' if len(gating.rfe_selected_features) > 50 else 'Correlation-based selection',
+                'selection_criteria': 'Top features based on predictive importance',
+                'weak_feature_handling': 'Assigned minimum weight of 0.01 to maintain tracking',
+                'strong_feature_boost': 'High-impact features get proportional weights'
+            }
+            
+            return jsonify(analysis_results)
+    
+    return jsonify({
+        'rfe_performed': False,
+        'message': 'RFE analysis not yet performed or no data available'
+    })
+
+@app.route('/api/feature-performance')
+def feature_performance():
+    """Return real-time feature performance metrics"""
+    if bot_instance and hasattr(bot_instance, 'gating'):
+        gating = bot_instance.gating
+        
+        if hasattr(gating, 'feature_performance'):
+            performance_data = {
+                'timestamp': datetime.now().isoformat(),
+                'feature_groups': {},
+                'adaptation_stats': {
+                    'adaptation_rate': getattr(gating, 'adaptation_rate', 0.1),
+                    'min_weight': getattr(gating, 'min_weight', 0.01),
+                    'total_adaptations': 0
+                }
+            }
+            
+            for group_name, perf_data in gating.feature_performance.items():
+                performance_data['feature_groups'][group_name] = {
+                    'current_weight': perf_data.get('weight', 0.0),
+                    'avg_performance': perf_data.get('avg_performance', 0.0),
+                    'rfe_selected': perf_data.get('rfe_selected', False),
+                    'rfe_rank': perf_data.get('rfe_rank', 999),
+                    'adaptation_count': perf_data.get('adaptations', 0),
+                    'status': 'strong' if perf_data.get('weight', 0) > 0.1 else 'moderate' if perf_data.get('weight', 0) > 0.05 else 'weak'
+                }
+                
+                performance_data['adaptation_stats']['total_adaptations'] += perf_data.get('adaptations', 0)
+            
+            return jsonify(performance_data)
+    
+    return jsonify({
+        'message': 'Feature performance data not available'
+    })
 
 @app.route('/api/chart-data')
 def chart_data():
