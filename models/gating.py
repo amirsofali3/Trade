@@ -194,18 +194,29 @@ class FeatureGatingModule(nn.Module):
             y_clean = y[valid_samples]
             
             if len(X_clean) < 10:
-                logger.warning("Insufficient clean samples for RFE")
-                return {}
+                logger.warning(f"Very limited clean samples ({len(X_clean)}) - using simplified feature selection")
+                # For very limited data, use correlation-based selection
+                return self._perform_correlation_based_selection(X_clean, y_clean, feature_names)
+            
+            if len(X_clean) < 50:
+                logger.info(f"Limited samples ({len(X_clean)}) - using simplified Random Forest")
+                # Use simpler model for limited data
+                rf_estimator = RandomForestClassifier(
+                    n_estimators=10,
+                    max_depth=3,
+                    random_state=42,
+                    n_jobs=1
+                )
+            else:
+                # Use full model for sufficient data
+                rf_estimator = RandomForestClassifier(
+                    n_estimators=50,
+                    max_depth=10,
+                    random_state=42,
+                    n_jobs=1
+                )
             
             logger.info(f"RFE input: {X_clean.shape[0]} samples, {X_clean.shape[1]} features")
-            
-            # Use Random Forest as the estimator for RFE
-            rf_estimator = RandomForestClassifier(
-                n_estimators=50,
-                max_depth=10,
-                random_state=42,
-                n_jobs=1  # Avoid multiprocessing issues
-            )
             
             # Perform RFE
             n_features_to_select = min(self.rfe_n_features, X_clean.shape[1])
@@ -273,6 +284,65 @@ class FeatureGatingModule(nn.Module):
             
         except Exception as e:
             logger.error(f"Error during RFE: {str(e)}")
+            return {}
+    
+    def _perform_correlation_based_selection(self, X, y, feature_names):
+        """
+        Simplified feature selection for very limited data using correlation
+        """
+        try:
+            from scipy.stats import pearsonr
+            
+            correlations = []
+            for i in range(X.shape[1]):
+                try:
+                    # Calculate correlation with target
+                    corr, _ = pearsonr(X[:, i], y)
+                    correlations.append(abs(corr) if not np.isnan(corr) else 0.0)
+                except:
+                    correlations.append(0.0)
+            
+            # Select top features based on correlation
+            n_features_to_select = min(self.rfe_n_features, len(correlations))
+            top_indices = np.argsort(correlations)[-n_features_to_select:]
+            
+            self.rfe_selected_features = {}
+            self.rfe_feature_rankings = {}
+            
+            for i, feature_name in enumerate(feature_names):
+                is_selected = i in top_indices
+                correlation_score = correlations[i]
+                
+                self.rfe_selected_features[feature_name] = {
+                    'rank': 1 if is_selected else 2,
+                    'importance': correlation_score if is_selected else 0.01,
+                    'selected': is_selected
+                }
+                self.rfe_feature_rankings[feature_name] = 1 if is_selected else 2
+            
+            logger.info(f"Selected {len(top_indices)} features using correlation-based selection")
+            
+            # Update feature performance tracking
+            for group_name in self.feature_performance:
+                if group_name == 'indicator':
+                    # For indicators, check individual features
+                    selected_indicators = [name for name in self.rfe_selected_features.keys() 
+                                         if name.startswith('indicator.') and self.rfe_selected_features[name]['selected']]
+                    self.feature_performance[group_name]['rfe_selected'] = len(selected_indicators) > 0
+                    self.feature_performance[group_name]['rfe_rank'] = min([
+                        self.rfe_selected_features[name]['rank'] for name in selected_indicators
+                    ]) if selected_indicators else 999
+                else:
+                    # For other groups
+                    if group_name in self.rfe_selected_features:
+                        self.feature_performance[group_name]['rfe_selected'] = self.rfe_selected_features[group_name]['selected']
+                        self.feature_performance[group_name]['rfe_rank'] = self.rfe_selected_features[group_name]['rank']
+            
+            self.rfe_performed = True
+            return self.rfe_selected_features
+            
+        except Exception as e:
+            logger.error(f"Error in correlation-based selection: {str(e)}")
             return {}
     
     def get_rfe_weights(self):

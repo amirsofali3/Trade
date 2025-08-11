@@ -10,15 +10,20 @@ import json
 import pandas as pd
 import numpy as np
 
-# تنظیم لاگر
+# تنظیم لاگر با پشتیبانی UTF-8
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('trade.log'),
+        logging.FileHandler('trade.log', encoding='utf-8'),
         logging.StreamHandler(sys.stdout)
     ]
 )
+
+# Fix encoding for stdout handler
+for handler in logging.getLogger().handlers:
+    if isinstance(handler, logging.StreamHandler) and handler.stream == sys.stdout:
+        handler.stream = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
 
 logger = logging.getLogger("Main")
 
@@ -84,6 +89,9 @@ class TradingBot:
         # Communication queue with web interface
         self.message_queue = app.bot_message_queue
         
+        # Set bot instance for web interface access to RFE and features
+        app.bot_instance = self
+        
         logger.info("Trading bot initialization complete")
     
     def _perform_rfe_feature_selection(self):
@@ -98,12 +106,24 @@ class TradingBot:
             symbol = self.config.get('trading', {}).get('symbols', ['BTCUSDT'])[0]
             timeframe = self.config.get('trading', {}).get('timeframes', ['5m'])[0]
             
-            # Get recent OHLCV data for training
+            # Get recent OHLCV data for training - collect more data from different timeframes
             ohlcv_data = self.db_manager.get_ohlcv(symbol, timeframe, limit=500)
             
-            if ohlcv_data.empty or len(ohlcv_data) < 100:
-                logger.warning("Insufficient data for RFE. Need at least 100 samples.")
+            # If we don't have enough data, try to collect from multiple sources
+            if ohlcv_data.empty or len(ohlcv_data) < 50:
+                logger.info("Collecting fresh OHLCV data for RFE training...")
+                # Collect fresh data
+                fresh_data = self.collectors['ohlcv'].collect_historical_data(symbol, timeframe, days_back=30)
+                if fresh_data is not None and not fresh_data.empty:
+                    ohlcv_data = fresh_data
+                    logger.info(f"Collected {len(ohlcv_data)} fresh OHLCV samples")
+            
+            if ohlcv_data.empty or len(ohlcv_data) < 20:
+                logger.warning("Insufficient data for RFE. Need at least 20 samples.")
                 return False
+            
+            if len(ohlcv_data) < 100:
+                logger.info(f"Limited data ({len(ohlcv_data)} samples) - using adaptive RFE approach")
             
             # Calculate all 100 indicators
             logger.info("📊 Calculating 100 technical indicators...")

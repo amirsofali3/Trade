@@ -486,3 +486,6 @@
 2025-08-05 15:29:52,919 - Main - INFO - Trading bot stopped
 2025-08-06 22:20:57,674 - SignalGenerator - INFO - Initialized SignalGenerator with confidence threshold 0.7
 2025-08-06 22:20:57,674 - SignalGenerator - INFO - Marked SELL signal as executed, cooldown period started
+2025-08-11 01:00:26,708 - Main - INFO - Initializing components...
+2025-08-11 01:00:26,728 - DBManager - ERROR - Error creating database tables: (pymysql.err.OperationalError) (2003, "Can't connect to MySQL server on 'localhost' ([Errno 111] Connection refused)")
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
