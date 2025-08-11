@@ -86,6 +86,103 @@ class TradingBot:
         
         logger.info("Trading bot initialization complete")
     
+    def _perform_rfe_feature_selection(self):
+        """
+        Perform RFE feature selection before training starts
+        This finds the best 15 features from all 100+ available features
+        """
+        try:
+            logger.info("🔍 Starting RFE feature selection process...")
+            
+            # Collect training data for RFE
+            symbol = self.config.get('trading', {}).get('symbols', ['BTCUSDT'])[0]
+            timeframe = self.config.get('trading', {}).get('timeframes', ['5m'])[0]
+            
+            # Get recent OHLCV data for training
+            ohlcv_data = self.db_manager.get_ohlcv(symbol, timeframe, limit=500)
+            
+            if ohlcv_data.empty or len(ohlcv_data) < 100:
+                logger.warning("Insufficient data for RFE. Need at least 100 samples.")
+                return False
+            
+            # Calculate all 100 indicators
+            logger.info("📊 Calculating 100 technical indicators...")
+            indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe)
+            
+            if not indicators_result:
+                logger.warning("No indicators calculated for RFE")
+                return False
+            
+            # Prepare training features
+            training_data = {}
+            
+            # OHLCV features
+            if not ohlcv_data.empty:
+                ohlcv_features = self.encoders['ohlcv'].transform(ohlcv_data)
+                if isinstance(ohlcv_features, torch.Tensor):
+                    training_data['ohlcv'] = ohlcv_features.detach().numpy()
+            
+            # Indicator features (the main target for RFE)
+            if indicators_result:
+                # Convert indicator results to numpy array
+                indicator_matrix = []
+                indicator_names = []
+                
+                for name, values in indicators_result.items():
+                    if isinstance(values, list) and len(values) > 0:
+                        # Pad or truncate to same length
+                        padded_values = values[-len(ohlcv_data):] if len(values) >= len(ohlcv_data) else values + [0] * (len(ohlcv_data) - len(values))
+                        indicator_matrix.append(padded_values)
+                        indicator_names.append(name)
+                
+                if indicator_matrix:
+                    training_data['indicator'] = np.array(indicator_matrix).T  # Transpose to (samples, features)
+                    logger.info(f"📈 Prepared {len(indicator_names)} indicators for RFE")
+            
+            # Create simple training labels based on price movement
+            # This is a simplified approach - in production you'd use actual trading outcomes
+            training_labels = []
+            for i in range(1, len(ohlcv_data)):
+                price_change = (ohlcv_data['close'].iloc[i] - ohlcv_data['close'].iloc[i-1]) / ohlcv_data['close'].iloc[i-1]
+                if price_change > 0.01:  # >1% increase
+                    training_labels.append(0)  # BUY
+                elif price_change < -0.01:  # >1% decrease  
+                    training_labels.append(1)  # SELL
+                else:
+                    training_labels.append(2)  # HOLD
+            
+            # Add first label
+            training_labels = [2] + training_labels  # Start with HOLD
+            
+            if len(training_labels) != len(ohlcv_data):
+                training_labels = training_labels[:len(ohlcv_data)]
+            
+            logger.info(f"🎯 Training labels: BUY={training_labels.count(0)}, SELL={training_labels.count(1)}, HOLD={training_labels.count(2)}")
+            
+            # Perform RFE
+            rfe_results = self.gating.perform_rfe_selection(training_data, training_labels)
+            
+            if rfe_results:
+                rfe_summary = self.gating.get_rfe_summary()
+                logger.info("🚀 RFE feature selection completed!")
+                logger.info(f"Selected {rfe_summary['total_selected']} features out of {len(indicators_result)} available")
+                logger.info(f"Feature breakdown: {rfe_summary['selection_breakdown']}")
+                
+                # Log top selected features
+                if rfe_summary['top_features']:
+                    logger.info("🏆 Top selected features:")
+                    for i, feature in enumerate(rfe_summary['top_features'][:10]):
+                        logger.info(f"  {i+1}. {feature}")
+                
+                return True
+            else:
+                logger.warning("RFE feature selection failed")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error in RFE feature selection: {str(e)}")
+            return False
+    
     def _init_data_collectors(self):
         """Initialize data collection components"""
         symbols = self.config.get('trading', {}).get('symbols', ['BTCUSDT'])
@@ -120,27 +217,31 @@ class TradingBot:
         self.encoders['tick_data'] = TickDataEncoder(window_size=100)
         self.encoders['candle_pattern'] = CandlePatternEncoder(num_patterns=100)
         
-        # Feature dimensions
+        # Feature dimensions - Updated for 100 technical indicators
         feature_dims = {
             'ohlcv': (20, 13),  # (seq_length, feature_dim)
-            'indicator': (20, 20),
+            'indicator': (20, 100),  # 100 technical indicators
             'sentiment': (1, 1),
             'orderbook': (1, 42),
             'tick_data': (100, 3),
-            'candle_pattern': (1, 100)
+            'candle_pattern': (1, 100)  # Patterns now included in indicators
         }
         
-        # Gating mechanism
+        # Gating mechanism with RFE support
         feature_groups = {
             'ohlcv': 13,
-            'indicator': 20,
+            'indicator': 100,  # 100 technical indicators
             'sentiment': 1,
             'orderbook': 42,
             'tick_data': 3,
-            'candle_pattern': 100
+            'candle_pattern': 100  # Keep for compatibility but patterns are in indicators now
         }
         
-        self.gating = FeatureGatingModule(feature_groups)
+        self.gating = FeatureGatingModule(
+            feature_groups, 
+            rfe_enabled=True,  # Enable RFE
+            rfe_n_features=15  # Select best 15 features
+        )
         
         # Neural network model
         model_config = self.config.get('model', {})
@@ -240,11 +341,23 @@ class TradingBot:
         logger.info("Starting trading bot...")
         self.is_running = True
         
-        # Start data collectors
+        # Start data collectors first
         for name, collector in self.collectors.items():
             if hasattr(collector, 'start'):
                 collector.start()
                 logger.info(f"Started {name} collector")
+        
+        # Wait a moment for initial data collection
+        time.sleep(5)
+        
+        # Perform RFE feature selection before training
+        logger.info("🧠 Performing RFE feature selection before training...")
+        rfe_success = self._perform_rfe_feature_selection()
+        
+        if rfe_success:
+            logger.info("✅ RFE completed - model will use optimally selected features")
+        else:
+            logger.warning("⚠️ RFE failed - model will use default feature gating")
         
         # Start online learner
         self.learner.start()
@@ -670,11 +783,24 @@ class TradingBot:
         # Calculate performance metrics
         performance = self._calculate_performance()
         
-        # Prepare model stats
+        # Prepare model stats with version and RFE info
+        version_info = self.learner.get_version_info()
+        rfe_summary = self.gating.get_rfe_summary() if hasattr(self.gating, 'get_rfe_summary') else {}
+        
         model_stats = {
+            'model_version': version_info.get('current_version', '1.0.0'),
+            'updates_count': version_info.get('updates_count', 0),
             'feature_importance': {},
             'update_counts': {'model': self.learner.updates_counter},
-            'market_regime': self._detect_market_regime(data.get('ohlcv', pd.DataFrame()))
+            'market_regime': self._detect_market_regime(data.get('ohlcv', pd.DataFrame())),
+            'rfe_info': {
+                'enabled': self.gating.rfe_enabled if hasattr(self.gating, 'rfe_enabled') else False,
+                'performed': rfe_summary.get('rfe_performed', False),
+                'selected_features': rfe_summary.get('total_selected', 0),
+                'target_features': rfe_summary.get('target_features', 15),
+                'top_features': rfe_summary.get('top_features', [])[:5]  # Show top 5
+            },
+            'version_history': version_info.get('version_history', [])[-3:]  # Last 3 versions
         }
         
         # Extract feature importance from active features
