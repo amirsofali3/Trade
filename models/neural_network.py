@@ -841,16 +841,3 @@ class OnlineLearner:
                 'data_points': len(self.performance_window)
             }
         }
-                logger.info(f"Loaded learning progress: {self.get_learning_summary()}")
-            
-            # Load gating performance if available
-            if 'gating_performance' in checkpoint and self.gating_module:
-                gating_perf = checkpoint['gating_performance']
-                logger.info(f"Loaded feature performance data for {len(gating_perf)} features")
-            
-            logger.info(f"Enhanced model loaded from {checkpoint_path}")
-            return True
-        
-        except Exception as e:
-            logger.error(f"Error loading model: {str(e)}")
-            return False

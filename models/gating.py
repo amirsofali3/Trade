@@ -5,11 +5,18 @@ import torch.nn.functional as F
 import numpy as np
 import time
 from datetime import datetime
-from sklearn.feature_selection import RFE
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
 
 logger = logging.getLogger("Gating")
+
+# Optional scikit-learn import for RFE
+try:
+    from sklearn.feature_selection import RFE
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.linear_model import LogisticRegression
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
+    logger.warning("scikit-learn not available. RFE feature selection will be disabled.")
 
 class FeatureGatingModule(nn.Module):
     """
@@ -106,6 +113,11 @@ class FeatureGatingModule(nn.Module):
         if not self.rfe_enabled or self.rfe_performed:
             logger.info("RFE already performed or disabled")
             return self.rfe_selected_features
+        
+        if not SKLEARN_AVAILABLE:
+            logger.warning("scikit-learn not available. Disabling RFE feature selection.")
+            self.rfe_enabled = False
+            return {}
         
         logger.info("🔍 Starting RFE feature selection process...")
         
