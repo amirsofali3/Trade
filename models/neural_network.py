@@ -37,17 +37,12 @@ class MarketTransformer(nn.Module):
         # Calculate total feature dimension
         self.total_feature_dim = sum(dim[1] for dim in feature_dims.values())
         
-        # Feature embedding layers - these project all inputs to hidden_dim for consistency
-        self.embeddings = nn.ModuleDict()
-        
         # Projection layers to map each feature group to hidden_dim (fixes 128 vs 100 issue)
         self.projections = nn.ModuleDict()
         
         for name, (seq_len, dim) in feature_dims.items():
             # Projection layer maps input features to hidden_dim
             self.projections[name] = nn.Linear(dim, hidden_dim)
-            # Embedding layer for further processing
-            self.embeddings[name] = nn.Linear(hidden_dim, hidden_dim)
             
             logger.debug(f"Created projection for {name}: {dim} → {hidden_dim}")
         
@@ -229,7 +224,7 @@ class MarketTransformer(nn.Module):
                         padded[:x.size(0)] = x
                         x = padded.view(1, expected_seq_len, expected_feature_dim)
                 
-                # First, project features to hidden_dim to ensure consistency (fixes tensor size mismatch)
+                # Project to hidden_dim first to ensure dimensional consistency
                 if name in ['ohlcv', 'indicator', 'tick_data']:
                     # Sequential features: project each timestep
                     # x shape: (1, seq_len, feature_dim)
@@ -238,29 +233,32 @@ class MarketTransformer(nn.Module):
                     
                     logger.debug(f"Processing {name}: input shape {x.shape} -> flat shape {x_flat.shape}")
                     
-                    # Project to hidden_dim first
+                    # Project to hidden_dim
                     projected_flat = self.projections[name](x_flat)  # (batch_size * seq_len, hidden_dim)
-                    projected = projected_flat.view(batch_size, seq_len, self.hidden_dim)
+                    embedded = projected_flat.view(batch_size, seq_len, self.hidden_dim)
                     
-                    # Then apply embedding layer
-                    embedded_flat = self.embeddings[name](projected_flat)  # (batch_size * seq_len, hidden_dim)
-                    embedded = embedded_flat.view(batch_size, seq_len, self.hidden_dim)
-                    
-                    logger.debug(f"After projection and embedding {name}: shape {embedded.shape}")
+                    logger.debug(f"After projection {name}: shape {embedded.shape}")
                 else:
                     # Non-sequential features: project directly
-                    # x shape: (1, feature_dim)
+                    # x might be (1, feature_dim) or (1, 1, feature_dim)
                     logger.debug(f"Processing {name}: input shape {x.shape}")
                     
-                    # Project to hidden_dim first
-                    projected = self.projections[name](x)  # (1, hidden_dim)
+                    # Ensure x is 2D for projection
+                    if x.dim() > 2:
+                        x_2d = x.view(-1, x.shape[-1])  # Flatten to (batch, feature_dim)
+                    else:
+                        x_2d = x
                     
-                    # Then apply embedding layer
-                    embedded = self.embeddings[name](projected)  # (1, hidden_dim)
-                    # Expand to sequence length for compatibility
-                    embedded = embedded.unsqueeze(1)  # (1, 1, hidden_dim)
+                    # Project to hidden_dim
+                    projected = self.projections[name](x_2d)  # (batch, hidden_dim)
                     
-                    logger.debug(f"After projection and embedding {name}: shape {embedded.shape}")
+                    # Ensure we have the right shape: (batch, 1, hidden_dim)
+                    if projected.dim() == 2:
+                        embedded = projected.unsqueeze(1)  # (batch, 1, hidden_dim)
+                    else:
+                        embedded = projected
+                    
+                    logger.debug(f"After projection {name}: shape {embedded.shape}")
                 
                 # Add position encoding for sequential features
                 if name == 'ohlcv' or name == 'indicator' or name == 'tick_data':

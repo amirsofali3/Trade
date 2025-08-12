@@ -146,8 +146,8 @@ class FeatureGatingModule(nn.Module):
             common_len = min(array_lengths)
             logger.info(f"Length alignment: arrays={array_lengths}, common_len={common_len}")
             
-            if common_len < 10:
-                logger.warning(f"Common length {common_len} too small for RFE, need at least 10 samples")
+            if common_len < 5:
+                logger.warning(f"Common length {common_len} too small for RFE, need at least 5 samples")
                 return {}
             
             # Align all arrays to common length (take last N samples)
@@ -775,6 +775,7 @@ class FeatureGatingModule(nn.Module):
                 'method': method,
                 'ranked_features': ranked_features,
                 'selected': selected_features,
+                'selected_features': {k: v for k, v in self.rfe_selected_features.items() if v['selected']},  # For backward compatibility
                 'weights_mapping': weights_mapping,
                 'n_features_selected': len(selected_features),
                 'total_features': len(self.rfe_selected_features),
