@@ -9,6 +9,8 @@ from torch.utils.data import Dataset, DataLoader
 from datetime import datetime, timedelta
 import time
 import threading
+import tempfile
+from .locks import version_lock
 
 logger = logging.getLogger("NeuralNetwork")
 
@@ -916,45 +918,56 @@ class OnlineLearner:
             logger.error(f"Error incrementing version: {str(e)}")
     
     def _save_version_history_to_file(self):
-        """Save version history to external JSON file"""
+        """Save version history to external JSON file with atomic write and thread safety"""
         try:
-            import json
-            from datetime import datetime
             
-            version_file = 'version_history.json'
-            
-            # Read existing history if file exists
-            existing_history = []
-            try:
-                with open(version_file, 'r', encoding='utf-8') as f:
-                    existing_data = json.load(f)
-                    existing_history = existing_data.get('history', [])
-            except (FileNotFoundError, json.JSONDecodeError):
-                pass
-            
-            # Merge with current history, avoiding duplicates
-            combined_history = existing_history.copy()
-            for entry in self.version_history:
-                if entry not in combined_history:
-                    combined_history.append(entry)
-            
-            # Keep only last 20 entries
-            combined_history = combined_history[-20:]
-            
-            version_data = {
-                'current_version': self.model_version,
-                'last_updated': datetime.now().isoformat(),
-                'total_entries': len(combined_history),
-                'history': combined_history
-            }
-            
-            with open(version_file, 'w', encoding='utf-8') as f:
-                json.dump(version_data, f, indent=2, ensure_ascii=False)
-            
-            logger.info(f"Version history updated (entries={len(combined_history)})")
+            # Use lock for thread safety
+            with version_lock:
+                version_file = 'version_history.json'
+                
+                # Read existing history if file exists
+                existing_history = []
+                try:
+                    with open(version_file, 'r', encoding='utf-8') as f:
+                        existing_data = json.load(f)
+                        existing_history = existing_data.get('history', [])
+                except (FileNotFoundError, json.JSONDecodeError):
+                    pass
+                
+                # Merge with current history, avoiding duplicates
+                combined_history = existing_history.copy()
+                for entry in self.version_history:
+                    if entry not in combined_history:
+                        combined_history.append(entry)
+                
+                # Keep only last 20 entries
+                combined_history = combined_history[-20:]
+                
+                version_data = {
+                    'schema_version': 1,
+                    'current_version': self.model_version,
+                    'last_updated': datetime.now().isoformat(),
+                    'total_entries': len(combined_history),
+                    'history': combined_history
+                }
+                
+                # Atomic write using tempfile and os.replace
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as tmp_file:
+                    json.dump(version_data, tmp_file, indent=2, ensure_ascii=False)
+                    tmp_filename = tmp_file.name
+                
+                # Atomic replacement
+                os.replace(tmp_filename, version_file)
+                logger.info(f"Version history updated atomically (entries={len(combined_history)})")
             
         except Exception as e:
             logger.error(f"Failed to save version history: {str(e)}")
+            # Clean up temp file if it exists
+            try:
+                if 'tmp_filename' in locals():
+                    os.unlink(tmp_filename)
+            except:
+                pass
     
     def _should_increment_version(self):
         """
@@ -1067,6 +1080,51 @@ class OnlineLearner:
             'version_history': self.version_history[-5:],  # Last 5 versions
             'last_major_update': self.last_major_update.isoformat(),
             'total_versions': len(self.version_history)
+        }
+    
+    def get_training_accuracy(self):
+        """
+        Calculate training accuracy based on trade outcomes
+        
+        Returns:
+            Float: Training accuracy (0.0 to 1.0)
+        """
+        total_trades = self.trade_outcomes['successful_trades'] + self.trade_outcomes['failed_trades']
+        if total_trades == 0:
+            return 0.0
+        return self.trade_outcomes['successful_trades'] / total_trades
+    
+    def get_validation_accuracy(self):
+        """
+        Calculate validation accuracy based on recent performance window
+        
+        Returns:
+            Float: Validation accuracy (0.0 to 1.0)
+        """
+        if not self.performance_window:
+            return 0.0
+        # Use mean of recent performance as validation accuracy
+        return max(0.0, min(1.0, np.mean(self.performance_window)))
+    
+    def get_model_stats(self):
+        """
+        Get comprehensive model statistics for API endpoints
+        
+        Returns:
+            Dictionary with model statistics
+        """
+        return {
+            'training_accuracy': self.get_training_accuracy(),
+            'validation_accuracy': self.get_validation_accuracy(),
+            'model_version': self.model_version,
+            'updates_count': self.updates_counter,
+            'total_trades': self.trade_outcomes['successful_trades'] + self.trade_outcomes['failed_trades'],
+            'successful_trades': self.trade_outcomes['successful_trades'],
+            'failed_trades': self.trade_outcomes['failed_trades'],
+            'total_profit': self.trade_outcomes['total_profit'],
+            'total_loss': abs(self.trade_outcomes['total_loss']),
+            'performance_trend': np.mean(self.performance_window[-5:]) if len(self.performance_window) >= 5 else 0.0,
+            'last_update': self.last_update_time.isoformat() if hasattr(self, 'last_update_time') else None
         }
     
     def load_model(self, checkpoint_path):

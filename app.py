@@ -406,121 +406,162 @@ def confidence_validation():
 
 @app.route('/api/model-stats')
 def model_stats():
-    """Return enhanced model statistics"""
-    enhanced_stats = data_store['model_stats'].copy()
-    
-    # Add more detailed feature importance data
-    enhanced_stats['detailed_feature_importance'] = {}
-    
-    # Calculate feature importance from active features
-    total_weight = 0
-    for group_name, group_data in data_store['active_features'].items():
-        if isinstance(group_data, dict) and 'weight' in group_data:
-            total_weight += group_data['weight']
-        elif group_name == 'indicators':
-            for indicator_name, indicator_data in group_data.items():
-                total_weight += indicator_data.get('weight', 0)
-    
-    # Calculate percentages
-    for group_name, group_data in data_store['active_features'].items():
-        if isinstance(group_data, dict) and 'weight' in group_data:
-            enhanced_stats['detailed_feature_importance'][group_name] = {
-                'weight': group_data['weight'],
-                'percentage': (group_data['weight'] / total_weight * 100) if total_weight > 0 else 0,
-                'status': 'active' if group_data['weight'] > 0.01 else 'inactive'
-            }
-    
-    # Add model performance metrics (replace mock data)
-    performance_metrics = {}
-    
-    if bot_instance and hasattr(bot_instance, 'learner'):
-        learner = bot_instance.learner
+    """Return enhanced model statistics with real data and proper error handling"""
+    try:
+        # Get base stats
+        stats = data_store['model_stats'].copy()
         
-        # Get real metrics from learner
-        if hasattr(learner, 'performance_window') and learner.performance_window:
-            recent_success = sum(1 for p in learner.performance_window if p > 0.5)
-            training_accuracy = recent_success / len(learner.performance_window)
-        else:
-            training_accuracy = 0.0
+        # Add detailed feature importance data
+        stats['detailed_feature_importance'] = {}
         
-        # Get validation accuracy from trade outcomes - fix TypeError with type-safe handling
-        if hasattr(learner, 'trade_outcomes') and learner.trade_outcomes:
-            # Handle both dict and list formats for trade_outcomes
-            if isinstance(learner.trade_outcomes, dict):
-                # Dictionary format: get successful/failed counts
-                successful_trades = int(learner.trade_outcomes.get('successful_trades', 0))
-                failed_trades = int(learner.trade_outcomes.get('failed_trades', 0))
-                total_trades = successful_trades + failed_trades
-                validation_accuracy = successful_trades / total_trades if total_trades > 0 else 0.0
-            elif isinstance(learner.trade_outcomes, list):
-                # List format: count positive outcomes
+        # Calculate feature importance from active features
+        total_weight = 0
+        for group_name, group_data in data_store['active_features'].items():
+            if isinstance(group_data, dict) and 'weight' in group_data:
+                total_weight += float(group_data['weight'])
+            elif group_name == 'indicators':
+                for indicator_name, indicator_data in group_data.items():
+                    weight = indicator_data.get('weight', 0)
+                    total_weight += float(weight) if isinstance(weight, (int, float)) else 0.0
+        
+        # Calculate percentages with type safety
+        for group_name, group_data in data_store['active_features'].items():
+            try:
+                if isinstance(group_data, dict) and 'weight' in group_data:
+                    weight = float(group_data['weight']) if isinstance(group_data['weight'], (int, float)) else 0.0
+                    stats['detailed_feature_importance'][group_name] = {
+                        'weight': weight,
+                        'percentage': (weight / total_weight * 100) if total_weight > 0 else 0,
+                        'status': 'active' if weight > 0.01 else 'inactive'
+                    }
+            except (TypeError, ValueError):
+                # Handle invalid weight data
+                stats['detailed_feature_importance'][group_name] = {
+                    'weight': 0.0,
+                    'percentage': 0.0,
+                    'status': 'inactive'
+                }
+        
+        # Get real performance metrics from learner
+        performance_metrics = {}
+        if bot_instance and hasattr(bot_instance, 'learner'):
+            try:
+                model_stats = bot_instance.learner.get_model_stats()
+                performance_metrics = {
+                    'training_accuracy': model_stats.get('training_accuracy', 0.0),
+                    'validation_accuracy': model_stats.get('validation_accuracy', 0.0),
+                    'model_version': model_stats.get('model_version', '1.0.0'),
+                    'last_training_time': model_stats.get('last_update'),
+                    'feature_count': len([g for g in data_store['active_features'].values() if isinstance(g, dict) and g.get('weight', 0) > 0.01])
+                }
+                
+                # Add the performance metrics to main stats but also flatten to top level for compatibility
+                stats.update(model_stats)
+                
+                # Try to read recent updates from version_history.json file
                 try:
-                    successful_trades = sum(1 for outcome in learner.trade_outcomes if isinstance(outcome, (int, float)) and outcome > 0)
-                    validation_accuracy = successful_trades / len(learner.trade_outcomes) if learner.trade_outcomes else 0.0
-                except (TypeError, ValueError):
-                    # Fallback for mixed data types
-                    validation_accuracy = 0.0
-            else:
-                validation_accuracy = 0.0
+                    import json
+                    with open('version_history.json', 'r', encoding='utf-8') as f:
+                        version_data = json.load(f)
+                        recent_updates = []
+                        history = version_data.get('history', [])
+                        
+                        # Get last 3 updates  
+                        for update in reversed(history[-3:]):
+                            recent_updates.append({
+                                'timestamp': update.get('timestamp'),
+                                'type': update.get('update_type', 'unknown') + '_update',
+                                'version_change': f"{update.get('from_version', 'unknown')} → {update.get('to_version', 'unknown')}"
+                            })
+                        
+                        stats['recent_updates'] = recent_updates if recent_updates else [{'timestamp': None, 'type': 'no_updates', 'version_change': 'No version history available'}]
+                        
+                except (FileNotFoundError, json.JSONDecodeError):
+                    # Fallback to learner's version history
+                    if hasattr(bot_instance.learner, 'version_history'):
+                        recent_updates = []
+                        for update in reversed(bot_instance.learner.version_history[-3:]):
+                            recent_updates.append({
+                                'timestamp': update.get('timestamp'),
+                                'type': update.get('update_type', 'unknown') + '_update', 
+                                'version_change': f"{update.get('from_version', 'unknown')} → {update.get('to_version', 'unknown')}"
+                            })
+                        stats['recent_updates'] = recent_updates
+                    else:
+                        stats['recent_updates'] = [{'timestamp': None, 'type': 'no_updates', 'version_change': 'No updates available'}]
+                
+                logger.info(f"/api/model-stats served successfully with model_version: {model_stats.get('model_version', '1.0.0')}")
+                
+            except Exception as e:
+                logger.error(f"Error getting model stats from learner: {str(e)}")
+                # Set fallback values with proper types
+                performance_metrics = {
+                    'training_accuracy': 0.0,
+                    'validation_accuracy': 0.0,
+                    'model_version': '1.0.0',
+                    'last_training_time': None,
+                    'feature_count': 0
+                }
+                stats.update(performance_metrics)
+                stats['recent_updates'] = [{'timestamp': None, 'type': 'error', 'version_change': f'Error: {str(e)[:50]}...'}]
         else:
-            validation_accuracy = 0.0
+            # Set fallback values when bot not available
+            performance_metrics = {
+                'training_accuracy': 0.0,
+                'validation_accuracy': 0.0,
+                'model_version': '1.0.0',
+                'last_training_time': None,
+                'feature_count': 0
+            }
+            stats.update(performance_metrics)
+            stats['recent_updates'] = [{'timestamp': None, 'type': 'offline', 'version_change': 'Bot offline'}]
         
-        performance_metrics = {
-            'training_accuracy': round(training_accuracy, 3),
-            'validation_accuracy': round(validation_accuracy, 3),
-            'last_training_time': learner.last_training_time.isoformat() if hasattr(learner, 'last_training_time') and learner.last_training_time else None,
-            'model_version': learner.model_version if hasattr(learner, 'model_version') else '1.0.0',
-            'feature_count': sum(1 for group_data in data_store['active_features'].values() 
-                               for weight in ([group_data.get('weight', 0)] if isinstance(group_data, dict) and 'weight' in group_data 
-                                            else [ind.get('weight', 0) for ind in group_data.values()] if group_name == 'indicators' else []))
-        }
-    else:
-        # Fallback if bot not available
-        performance_metrics = {
+        # Add performance_metrics as nested object for backward compatibility
+        stats['performance_metrics'] = performance_metrics
+        
+        return jsonify(stats), 200
+        
+    except Exception as e:
+        logger.error(f"Error in /api/model-stats: {str(e)}")
+        return jsonify({
+            'error': 'Internal server error',
             'training_accuracy': 0.0,
             'validation_accuracy': 0.0,
-            'last_training_time': None,
             'model_version': '1.0.0',
-            'feature_count': 0
-        }
-    
-    enhanced_stats['performance_metrics'] = performance_metrics
-    
-    # Add recent model updates (replace mock data)
-    recent_updates = []
-    
-    if bot_instance and hasattr(bot_instance, 'learner') and hasattr(bot_instance.learner, 'version_history'):
-        # Get recent updates from version history
-        version_history = bot_instance.learner.version_history[-3:]  # Last 3 updates
-        for update in reversed(version_history):  # Most recent first
-            recent_updates.append({
-                'timestamp': update['timestamp'],
-                'type': update['update_type'] + '_update',
-                'version_change': f"{update['from_version']} → {update['to_version']}"
-            })
-    
-    # Fallback if no real data available
-    if not recent_updates:
-        recent_updates = [
-            {'timestamp': None, 'type': 'no_updates', 'version_change': 'No updates available'}
-        ]
-    
-    enhanced_stats['recent_updates'] = recent_updates
-    
-    return jsonify(enhanced_stats)
+            'recent_updates': [{'timestamp': None, 'type': 'error', 'version_change': 'Server error'}]
+        }), 500
 
 @app.route('/api/feature-selection')
 def feature_selection():
-    """Return detailed RFE feature selection results"""
+    """Return detailed RFE feature selection results with all required fields"""
     try:
         # First try to read from external JSON file
         try:
             import json
             with open('rfe_results.json', 'r', encoding='utf-8') as f:
                 rfe_data = json.load(f)
+                
+                # Ensure all required fields are present
+                if 'weights_summary' not in rfe_data:
+                    weights_mapping = rfe_data.get('weights_mapping', {})
+                    rfe_data['weights_summary'] = {
+                        'strong': weights_mapping.get('strong', 0),
+                        'medium': weights_mapping.get('medium', 0), 
+                        'weak': weights_mapping.get('weak', 0)
+                    }
+                
+                # Ensure last_run field exists
+                if 'last_run' not in rfe_data:
+                    rfe_data['last_run'] = rfe_data.get('timestamp', datetime.now().isoformat())
+                
+                # Ensure rfe_performed field exists
+                if 'rfe_performed' not in rfe_data:
+                    rfe_data['rfe_performed'] = True
+                
                 return jsonify(rfe_data)
-        except (FileNotFoundError, json.JSONDecodeError):
-            pass
+                
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.debug(f"Could not read rfe_results.json: {str(e)}")
         
         # Fallback to bot instance data
         if bot_instance and hasattr(bot_instance, 'gating'):
@@ -528,6 +569,13 @@ def feature_selection():
             
             if gating.rfe_performed and gating.rfe_selected_features:
                 selected_features = [k for k, v in gating.rfe_selected_features.items() if v['selected']]
+                
+                # Calculate weights summary
+                weights_summary = {
+                    'strong': len([f for f in gating.rfe_selected_features.values() if f['selected'] and f['importance'] >= 0.7]),
+                    'medium': len([f for f in gating.rfe_selected_features.values() if f['selected'] and 0.3 <= f['importance'] < 0.7]),
+                    'weak': len([f for f in gating.rfe_selected_features.values() if not f['selected'] or f['importance'] < 0.3])
+                }
                 
                 result = {
                     'rfe_performed': True,
@@ -546,20 +594,31 @@ def feature_selection():
                         for k, v in sorted(gating.rfe_selected_features.items(), 
                                          key=lambda x: x[1]['rank'])
                     ],
-                    'weights_mapping': {
-                        'strong': len([f for f in gating.rfe_selected_features.values() if f['selected'] and f['importance'] >= 0.7]),
-                        'medium': len([f for f in gating.rfe_selected_features.values() if f['selected'] and 0.3 <= f['importance'] < 0.7]),
-                        'weak': len([f for f in gating.rfe_selected_features.values() if not f['selected'] or f['importance'] < 0.3])
-                    }
+                    'weights_mapping': weights_summary,  # Keep for backward compatibility
+                    'weights_summary': weights_summary   # New required field
                 }
             else:
                 result = {
                     'rfe_performed': False,
+                    'method': 'none',
+                    'last_run': None,
+                    'n_features_selected': 0,
+                    'total_features': 0,
+                    'selected_features': [],
+                    'ranked_features': [],
+                    'weights_summary': {'strong': 0, 'medium': 0, 'weak': 0},
                     'message': 'RFE feature selection not yet performed'
                 }
         else:
             result = {
                 'rfe_performed': False,
+                'method': 'none',
+                'last_run': None,
+                'n_features_selected': 0,
+                'total_features': 0,
+                'selected_features': [],
+                'ranked_features': [],
+                'weights_summary': {'strong': 0, 'medium': 0, 'weak': 0},
                 'message': 'Bot instance not available'
             }
             
@@ -569,6 +628,13 @@ def feature_selection():
         logger.error(f"Error in feature-selection endpoint: {str(e)}")
         return jsonify({
             'rfe_performed': False,
+            'method': 'error',
+            'last_run': None,
+            'n_features_selected': 0,
+            'total_features': 0,
+            'selected_features': [],
+            'ranked_features': [],
+            'weights_summary': {'strong': 0, 'medium': 0, 'weak': 0},
             'error': str(e)
         }), 500
 
@@ -610,6 +676,69 @@ def version_history():
         return jsonify({
             'current_version': '1.0.0',
             'error': str(e)
+        }), 500
+
+@app.route('/api/diagnostics')  
+def diagnostics():
+    """Return diagnostic information for debugging"""
+    try:
+        result = {
+            'buffer_length': 0,
+            'gating_weight_stats': {'min': 0.0, 'mean': 0.0, 'max': 0.0},
+            'last_train_time': None,
+            'last_rfe_time': None,
+            'system_info': {
+                'timestamp': datetime.now().isoformat(),
+                'bot_status': data_store.get('bot_status', 'unknown')
+            }
+        }
+        
+        if bot_instance:
+            # Buffer length from learner
+            if hasattr(bot_instance, 'learner') and hasattr(bot_instance.learner, 'experience_buffer'):
+                buffer = bot_instance.learner.experience_buffer
+                if isinstance(buffer, dict) and 'features' in buffer:
+                    result['buffer_length'] = len(buffer['features'])
+                
+                # Last training time
+                if hasattr(bot_instance.learner, 'last_update_time'):
+                    result['last_train_time'] = bot_instance.learner.last_update_time.isoformat()
+            
+            # Gating weight statistics
+            if hasattr(bot_instance, 'gating'):
+                try:
+                    weights = bot_instance.gating.get_rfe_weights()
+                    if weights:
+                        weight_values = [w for w in weights.values() if isinstance(w, (int, float))]
+                        if weight_values:
+                            result['gating_weight_stats'] = {
+                                'min': round(min(weight_values), 4),
+                                'mean': round(sum(weight_values) / len(weight_values), 4),
+                                'max': round(max(weight_values), 4),
+                                'count': len(weight_values)
+                            }
+                except Exception as e:
+                    logger.debug(f"Error getting weight stats: {str(e)}")
+            
+            # Last RFE time from file
+            try:
+                import json
+                with open('rfe_results.json', 'r', encoding='utf-8') as f:
+                    rfe_data = json.load(f)
+                    result['last_rfe_time'] = rfe_data.get('last_run') or rfe_data.get('timestamp')
+            except (FileNotFoundError, json.JSONDecodeError):
+                pass
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Error in diagnostics endpoint: {str(e)}")
+        return jsonify({
+            'error': str(e),
+            'buffer_length': 0,
+            'gating_weight_stats': {'min': 0.0, 'mean': 0.0, 'max': 0.0},
+            'last_train_time': None,
+            'last_rfe_time': None
         }), 500
 
 @app.route('/api/plot')

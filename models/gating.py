@@ -5,6 +5,9 @@ import torch.nn.functional as F
 import numpy as np
 import time
 from datetime import datetime
+import tempfile
+import os
+from .locks import rfe_lock
 
 logger = logging.getLogger("Gating")
 
@@ -738,63 +741,74 @@ class FeatureGatingModule(nn.Module):
         logger.info(f"Applied RFE weights: strong={strong_count}, medium={medium_count}, weak={weak_count}")
     
     def _save_rfe_results_to_file(self):
-        """Save RFE results to external JSON file with enhanced format"""
+        """Save RFE results to external JSON file with atomic write and thread safety"""
         try:
-            import os
             import json
-            from datetime import datetime
             
-            # Determine method used
-            method = 'variance' if not hasattr(self, 'rfe_model') else 'RandomForestRFE'
-            
-            # Create ranked features list
-            ranked_features = []
-            for name, info in self.rfe_selected_features.items():
-                ranked_features.append({
-                    'name': name,
-                    'rank': info['rank'],
-                    'importance': info['importance'],
-                    'selected': info['selected']
-                })
-            
-            # Sort by rank (lower is better)
-            ranked_features.sort(key=lambda x: x['rank'])
-            
-            # Selected features only
-            selected_features = [f['name'] for f in ranked_features if f['selected']]
-            
-            # Weight mapping summary
-            weights_mapping = {
-                'strong': len([f for f in ranked_features if f['selected'] and f['importance'] >= 0.7]),
-                'medium': len([f for f in ranked_features if f['selected'] and 0.3 <= f['importance'] < 0.7]),
-                'weak': len([f for f in ranked_features if not f['selected'] or f['importance'] < 0.3])
-            }
-            
-            rfe_data = {
-                'timestamp': datetime.now().isoformat(),
-                'method': method,
-                'ranked_features': ranked_features,
-                'selected': selected_features,
-                'selected_features': {k: v for k, v in self.rfe_selected_features.items() if v['selected']},  # For backward compatibility
-                'weights_mapping': weights_mapping,
-                'n_features_selected': len(selected_features),
-                'total_features': len(self.rfe_selected_features),
-                'rfe_n_features_target': self.rfe_n_features,
-                'performance_summary': {
-                    'selection_criteria': 'Top features based on predictive importance or variance',
-                    'weak_feature_handling': f'Assigned minimum weight of {self.min_weight}',
-                    'strong_feature_boost': 'High-impact features receive proportional weights 0.7-0.9'
+            # Use lock for thread safety
+            with rfe_lock:
+                # Determine method used
+                method = 'variance' if not hasattr(self, 'rfe_model') else 'RandomForestRFE'
+                
+                # Create ranked features list
+                ranked_features = []
+                for name, info in self.rfe_selected_features.items():
+                    ranked_features.append({
+                        'name': name,
+                        'rank': info['rank'],
+                        'importance': info['importance'],
+                        'selected': info['selected']
+                    })
+                
+                # Sort by rank (lower is better)
+                ranked_features.sort(key=lambda x: x['rank'])
+                
+                # Selected features only
+                selected_features = [f['name'] for f in ranked_features if f['selected']]
+                
+                # Weight mapping summary
+                weights_mapping = {
+                    'strong': len([f for f in ranked_features if f['selected'] and f['importance'] >= 0.7]),
+                    'medium': len([f for f in ranked_features if f['selected'] and 0.3 <= f['importance'] < 0.7]),
+                    'weak': len([f for f in ranked_features if not f['selected'] or f['importance'] < 0.3])
                 }
-            }
-            
-            rfe_file = 'rfe_results.json'
-            with open(rfe_file, 'w', encoding='utf-8') as f:
-                json.dump(rfe_data, f, indent=2, ensure_ascii=False)
-            
-            logger.info(f"RFE results saved to {rfe_file}")
+                
+                rfe_data = {
+                    'last_run': datetime.now().isoformat(),
+                    'timestamp': datetime.now().isoformat(),  # Keep for backward compatibility
+                    'method': method,
+                    'ranked_features': ranked_features,
+                    'selected': selected_features,
+                    'selected_features': {k: v for k, v in self.rfe_selected_features.items() if v['selected']},  # For backward compatibility
+                    'weights_mapping': weights_mapping,
+                    'n_features_selected': len(selected_features),
+                    'total_features': len(self.rfe_selected_features),
+                    'rfe_n_features_target': self.rfe_n_features,
+                    'performance_summary': {
+                        'selection_criteria': 'Top features based on predictive importance or variance',
+                        'weak_feature_handling': f'Assigned minimum weight of {self.min_weight}',
+                        'strong_feature_boost': 'High-impact features receive proportional weights 0.7-0.9'
+                    }
+                }
+                
+                # Atomic write using tempfile and os.replace
+                rfe_file = 'rfe_results.json'
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as tmp_file:
+                    json.dump(rfe_data, tmp_file, indent=2, ensure_ascii=False)
+                    tmp_filename = tmp_file.name
+                
+                # Atomic replacement
+                os.replace(tmp_filename, rfe_file)
+                logger.info(f"RFE results saved atomically to {rfe_file}")
             
         except Exception as e:
             logger.error(f"Failed to save RFE results: {str(e)}")
+            # Clean up temp file if it exists
+            try:
+                if 'tmp_filename' in locals():
+                    os.unlink(tmp_filename)
+            except:
+                pass
     
     def get_rfe_summary(self):
         """
