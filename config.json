@@ -31,5 +31,20 @@
     "dropout": 0.1,
     "learning_rate": 1e-4,
     "update_interval": 3600
+  },
+  "rfe": {
+    "enabled": true,
+    "lookahead": 3,
+    "initial_threshold": 0.002,
+    "min_samples": 30
+  },
+  "training": {
+    "warmup_enabled": true
+  },
+  "online": {
+    "update_interval": 60
+  },
+  "data": {
+    "max_candles_for_rfe": 1000
   }
 }

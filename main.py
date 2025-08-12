@@ -99,110 +99,377 @@ class TradingBot:
         
         logger.info("Trading bot initialization complete")
     
-    def _perform_rfe_feature_selection(self):
+    def _create_adaptive_labels(self, ohlcv_data, lookahead=3, initial_threshold=0.002):
         """
-        Perform RFE feature selection before training starts
-        This finds the best 15 features from all 100+ available features
+        Create adaptive, leak-safe labels with configurable lookahead
+        
+        Args:
+            ohlcv_data: DataFrame with OHLCV data including timestamps
+            lookahead: Number of candles to look ahead for labeling (default 3)
+            initial_threshold: Initial threshold for price change (default 0.2%)
+            
+        Returns:
+            tuple: (labels array, timestamps array, label_info dict)
         """
         try:
-            logger.info("🔍 Starting RFE feature selection process...")
+            logger.info(f"Creating adaptive labels with lookahead={lookahead}, threshold={initial_threshold}")
+            
+            if len(ohlcv_data) < lookahead + 1:
+                logger.warning(f"Insufficient data for lookahead labeling: need {lookahead + 1}, have {len(ohlcv_data)}")
+                return [], [], {}
+            
+            labels = []
+            timestamps = []
+            
+            # Use only data where we can look ahead without leakage
+            valid_data = ohlcv_data.iloc[:-lookahead]  # Remove last 'lookahead' samples to prevent leakage
+            
+            for i in range(len(valid_data)):
+                current_price = valid_data['close'].iloc[i]
+                future_price = ohlcv_data['close'].iloc[i + lookahead]  # Look ahead by 'lookahead' candles
+                timestamp = valid_data['timestamp'].iloc[i] if 'timestamp' in valid_data.columns else valid_data.index[i]
+                
+                if current_price > 0:
+                    price_change = (future_price - current_price) / current_price
+                    
+                    if price_change > initial_threshold:
+                        labels.append(0)  # BUY
+                    elif price_change < -initial_threshold:
+                        labels.append(1)  # SELL  
+                    else:
+                        labels.append(2)  # HOLD
+                else:
+                    labels.append(2)  # HOLD for invalid price
+                
+                timestamps.append(timestamp)
+            
+            # Check label diversity and apply adaptive thresholds
+            label_counts = {0: labels.count(0), 1: labels.count(1), 2: labels.count(2)}
+            unique_classes = sum(1 for count in label_counts.values() if count > 0)
+            
+            logger.info(f"Initial labels: BUY={label_counts[0]}, SELL={label_counts[1]}, HOLD={label_counts[2]}")
+            
+            # If we have single-class labels, try smaller threshold
+            if unique_classes < 2:
+                logger.info("Single-class detected, trying smaller threshold (0.001)")
+                labels = []
+                smaller_threshold = 0.001
+                
+                for i in range(len(valid_data)):
+                    current_price = valid_data['close'].iloc[i]
+                    future_price = ohlcv_data['close'].iloc[i + lookahead]
+                    
+                    if current_price > 0:
+                        price_change = (future_price - current_price) / current_price
+                        
+                        if price_change > smaller_threshold:
+                            labels.append(0)  # BUY
+                        elif price_change < -smaller_threshold:
+                            labels.append(1)  # SELL
+                        else:
+                            labels.append(2)  # HOLD
+                    else:
+                        labels.append(2)  # HOLD
+                
+                label_counts = {0: labels.count(0), 1: labels.count(1), 2: labels.count(2)}
+                unique_classes = sum(1 for count in label_counts.values() if count > 0)
+                logger.info(f"Smaller threshold labels: BUY={label_counts[0]}, SELL={label_counts[1]}, HOLD={label_counts[2]}")
+            
+            # If still single-class, use quantile-based method
+            if unique_classes < 2:
+                logger.info("Still single-class, using quantile-based adaptive thresholds")
+                labels = []
+                
+                # Calculate price changes
+                price_changes = []
+                for i in range(len(valid_data)):
+                    current_price = valid_data['close'].iloc[i]
+                    future_price = ohlcv_data['close'].iloc[i + lookahead]
+                    
+                    if current_price > 0:
+                        price_change = (future_price - current_price) / current_price
+                        price_changes.append(price_change)
+                    else:
+                        price_changes.append(0.0)
+                
+                # Use 30th and 70th percentiles as thresholds
+                if price_changes:
+                    buy_threshold = np.percentile(price_changes, 70)
+                    sell_threshold = np.percentile(price_changes, 30)
+                    logger.info(f"Quantile thresholds: BUY>{buy_threshold:.4f}, SELL<{sell_threshold:.4f}")
+                    
+                    for price_change in price_changes:
+                        if price_change > buy_threshold:
+                            labels.append(0)  # BUY
+                        elif price_change < sell_threshold:
+                            labels.append(1)  # SELL
+                        else:
+                            labels.append(2)  # HOLD
+                    
+                    label_counts = {0: labels.count(0), 1: labels.count(1), 2: labels.count(2)}
+                    unique_classes = sum(1 for count in label_counts.values() if count > 0)
+                    logger.info(f"Quantile labels: BUY={label_counts[0]}, SELL={label_counts[1]}, HOLD={label_counts[2]}")
+            
+            # Final check - if still single class, convert to binary
+            if unique_classes < 2:
+                logger.warning("Still single-class after adaptive thresholds, converting to binary classification")
+                # Convert all non-HOLD to the dominant class, keep some HOLD
+                labels = [2 if i % 3 == 0 else (0 if labels.count(0) > labels.count(1) else 1) for i in range(len(labels))]
+                label_counts = {0: labels.count(0), 1: labels.count(1), 2: labels.count(2)}
+                logger.info(f"Binary conversion: BUY={label_counts[0]}, SELL={label_counts[1]}, HOLD={label_counts[2]}")
+            
+            label_info = {
+                'label_counts': label_counts,
+                'unique_classes': unique_classes,
+                'total_samples': len(labels),
+                'lookahead': lookahead,
+                'threshold_used': initial_threshold
+            }
+            
+            return labels, timestamps, label_info
+            
+        except Exception as e:
+            logger.error(f"Error creating adaptive labels: {str(e)}")
+            return [], [], {}
+    
+    def _align_on_timestamps(self, features_by_group, label_series, label_timestamps):
+        """
+        Align features and labels on timestamps using inner join
+        
+        Args:
+            features_by_group: Dict of feature groups with timestamps
+            label_series: Array of labels
+            label_timestamps: Array of label timestamps
+            
+        Returns:
+            tuple: (aligned_features_by_group, aligned_labels, common_timestamps)
+        """
+        try:
+            logger.info("Performing timestamp alignment across feature groups and labels...")
+            
+            if not features_by_group or len(label_series) == 0:
+                logger.warning("No features or labels provided for alignment")
+                return {}, [], []
+            
+            # Convert label timestamps to set for fast lookup
+            label_timestamp_set = set(label_timestamps)
+            
+            # Find common timestamps across all groups
+            common_timestamps = None
+            group_sizes = []
+            
+            for group_name, group_data in features_by_group.items():
+                if hasattr(group_data, 'index'):
+                    # DataFrame with timestamp index
+                    group_timestamps = set(group_data.index)
+                elif isinstance(group_data, dict) and 'timestamps' in group_data:
+                    # Dict with explicit timestamps
+                    group_timestamps = set(group_data['timestamps'])
+                else:
+                    logger.warning(f"Group {group_name} has no timestamp information, skipping alignment")
+                    continue
+                
+                group_sizes.append(len(group_timestamps))
+                
+                if common_timestamps is None:
+                    common_timestamps = group_timestamps
+                else:
+                    common_timestamps = common_timestamps.intersection(group_timestamps)
+            
+            # Intersect with label timestamps
+            if common_timestamps:
+                common_timestamps = common_timestamps.intersection(label_timestamp_set)
+                common_timestamps = sorted(list(common_timestamps))
+            else:
+                common_timestamps = []
+            
+            logger.info(f"Length alignment: arrays={group_sizes}, common_len={len(common_timestamps)}")
+            
+            if len(common_timestamps) == 0:
+                logger.warning("No common timestamps found for alignment")
+                return {}, [], []
+            
+            # Align features
+            aligned_features = {}
+            for group_name, group_data in features_by_group.items():
+                try:
+                    if hasattr(group_data, 'index'):
+                        # DataFrame - select rows with common timestamps
+                        aligned_data = group_data.loc[group_data.index.isin(common_timestamps)].sort_index()
+                        aligned_features[group_name] = aligned_data
+                    elif isinstance(group_data, dict) and 'timestamps' in group_data:
+                        # Dict with timestamps - filter by common timestamps
+                        timestamps = group_data['timestamps']
+                        data = group_data['data']
+                        
+                        # Create mask for common timestamps
+                        mask = [ts in common_timestamps for ts in timestamps]
+                        aligned_timestamps = [ts for i, ts in enumerate(timestamps) if mask[i]]
+                        aligned_data = [data[i] for i, keep in enumerate(mask) if keep]
+                        
+                        aligned_features[group_name] = {
+                            'timestamps': aligned_timestamps,
+                            'data': aligned_data
+                        }
+                    else:
+                        logger.warning(f"Cannot align group {group_name} - unsupported format")
+                except Exception as e:
+                    logger.warning(f"Error aligning group {group_name}: {str(e)}")
+            
+            # Align labels
+            aligned_labels = []
+            for i, timestamp in enumerate(label_timestamps):
+                if timestamp in common_timestamps:
+                    aligned_labels.append(label_series[i])
+            
+            logger.info(f"Aligned features/labels on timestamps: {len(aligned_labels)} samples; groups={list(aligned_features.keys())}")
+            
+            return aligned_features, aligned_labels, common_timestamps
+            
+        except Exception as e:
+            logger.error(f"Error in timestamp alignment: {str(e)}")
+            return {}, [], []
+    
+    def _perform_rfe_feature_selection(self):
+        """
+        Perform RFE feature selection with timestamp alignment and adaptive labeling
+        """
+        try:
+            logger.info("🔍 Starting enhanced RFE feature selection process...")
+            
+            # Get RFE configuration
+            rfe_config = self.config.get('rfe', {})
+            if not rfe_config.get('enabled', True):
+                logger.info("RFE disabled in configuration")
+                return False
+            
+            lookahead = rfe_config.get('lookahead', 3)
+            initial_threshold = rfe_config.get('initial_threshold', 0.002)
+            min_samples = rfe_config.get('min_samples', 30)
+            max_candles = self.config.get('data', {}).get('max_candles_for_rfe', 1000)
             
             # Collect training data for RFE
             symbol = self.config.get('trading', {}).get('symbols', ['BTCUSDT'])[0]
             timeframe = self.config.get('trading', {}).get('timeframes', ['5m'])[0]
             
-            # Get recent OHLCV data for training - collect more data from different timeframes
-            ohlcv_data = self.db_manager.get_ohlcv(symbol, timeframe, limit=500)
+            # Get OHLCV data with more historical data
+            logger.info(f"Fetching up to {max_candles} candles for RFE training...")
+            ohlcv_data = self.db_manager.get_ohlcv(symbol, timeframe, limit=max_candles)
             
-            # If we don't have enough data, try to collect from multiple sources
-            if ohlcv_data.empty or len(ohlcv_data) < 50:
-                logger.info("Collecting fresh OHLCV data for RFE training...")
-                # Collect fresh data - convert 30 days to appropriate limit
-                # For 5m timeframe: 30 days = 30 * 24 * 60 / 5 = 8640 candles
-                days_back = 30
-                timeframe_minutes = self.collectors['ohlcv']._timeframe_to_minutes(timeframe)
-                limit = min(1000, int(days_back * 24 * 60 / timeframe_minutes))  # Cap at 1000 for API limits
+            # If we don't have enough data, try to collect fresh data
+            if ohlcv_data.empty or len(ohlcv_data) < min_samples:
+                logger.info("Insufficient historical data, collecting fresh data...")
                 
-                fresh_data = self.collectors['ohlcv'].collect_historical_data(symbol, timeframe, limit=limit)
+                # Try to collect more data in chunks if possible
+                fresh_data = self.collectors['ohlcv'].collect_historical_data(symbol, timeframe, limit=max_candles)
                 if fresh_data is not None and not fresh_data.empty:
                     ohlcv_data = fresh_data
                     logger.info(f"Collected {len(ohlcv_data)} fresh OHLCV samples")
             
-            if ohlcv_data.empty or len(ohlcv_data) < 20:
-                logger.warning("Insufficient data for RFE. Need at least 20 samples.")
+            if ohlcv_data.empty or len(ohlcv_data) < lookahead + 1:
+                logger.warning(f"Insufficient data for RFE. Need at least {lookahead + 1} samples.")
                 return False
             
-            if len(ohlcv_data) < 100:
-                logger.info(f"Limited data ({len(ohlcv_data)} samples) - using adaptive RFE approach")
+            # Ensure timestamp column exists
+            if 'timestamp' not in ohlcv_data.columns:
+                if ohlcv_data.index.name == 'timestamp' or hasattr(ohlcv_data.index, 'to_pydatetime'):
+                    ohlcv_data['timestamp'] = ohlcv_data.index
+                else:
+                    # Create synthetic timestamps
+                    ohlcv_data['timestamp'] = pd.date_range(end=pd.Timestamp.now(), periods=len(ohlcv_data), freq='5min')
             
-            # Calculate all 100 indicators
-            logger.info("📊 Calculating 100 technical indicators...")
+            # Create adaptive labels with no leakage
+            logger.info("📊 Creating adaptive, leak-safe labels...")
+            labels, label_timestamps, label_info = self._create_adaptive_labels(
+                ohlcv_data, lookahead=lookahead, initial_threshold=initial_threshold
+            )
+            
+            if len(labels) == 0:
+                logger.warning("Failed to create labels")
+                return False
+            
+            logger.info(f"Training labels: BUY={label_info['label_counts'][0]}, SELL={label_info['label_counts'][1]}, HOLD={label_info['label_counts'][2]} (post-alignment and cleaning)")
+            
+            # Prepare feature groups with timestamps
+            features_by_group = {}
+            
+            # OHLCV features with timestamps
+            valid_ohlcv = ohlcv_data.iloc[:-lookahead]  # Remove last samples to match labels
+            features_by_group['ohlcv'] = valid_ohlcv.set_index('timestamp') if 'timestamp' in valid_ohlcv.columns else valid_ohlcv
+            
+            # Calculate indicators
+            logger.info("📈 Calculating technical indicators...")
             indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe)
             
-            if not indicators_result:
-                logger.warning("No indicators calculated for RFE")
-                return False
-            
-            # Prepare training features
-            training_data = {}
-            
-            # OHLCV features
-            if not ohlcv_data.empty:
-                ohlcv_features = self.encoders['ohlcv'].transform(ohlcv_data)
-                if isinstance(ohlcv_features, torch.Tensor):
-                    training_data['ohlcv'] = ohlcv_features.detach().numpy()
-            
-            # Indicator features (the main target for RFE)
             if indicators_result:
-                # Convert indicator results to numpy array
-                indicator_matrix = []
-                indicator_names = []
-                
+                # Convert indicators to timestamped DataFrame
+                indicator_df = pd.DataFrame()
                 for name, values in indicators_result.items():
                     if isinstance(values, list) and len(values) > 0:
-                        # Pad or truncate to same length
-                        padded_values = values[-len(ohlcv_data):] if len(values) >= len(ohlcv_data) else values + [0] * (len(ohlcv_data) - len(values))
-                        indicator_matrix.append(padded_values)
-                        indicator_names.append(name)
+                        # Align indicators with OHLCV timestamps
+                        if len(values) == len(ohlcv_data):
+                            indicator_df[name] = values
+                        elif len(values) > len(ohlcv_data):
+                            indicator_df[name] = values[-len(ohlcv_data):]
+                        else:
+                            # Pad with forward fill
+                            padded = [values[0]] * (len(ohlcv_data) - len(values)) + values
+                            indicator_df[name] = padded
                 
-                if indicator_matrix:
-                    training_data['indicator'] = np.array(indicator_matrix).T  # Transpose to (samples, features)
-                    logger.info(f"📈 Prepared {len(indicator_names)} indicators for RFE")
+                if not indicator_df.empty:
+                    indicator_df.index = ohlcv_data['timestamp'].values
+                    # Remove last samples to match labels
+                    features_by_group['indicator'] = indicator_df.iloc[:-lookahead]
+                    logger.info(f"📈 Prepared {len(indicator_df.columns)} indicators for RFE")
             
-            # Create simple training labels based on price movement
-            # This is a simplified approach - in production you'd use actual trading outcomes
-            training_labels = []
-            for i in range(1, len(ohlcv_data)):
-                price_change = (ohlcv_data['close'].iloc[i] - ohlcv_data['close'].iloc[i-1]) / ohlcv_data['close'].iloc[i-1]
-                if price_change > 0.01:  # >1% increase
-                    training_labels.append(0)  # BUY
-                elif price_change < -0.01:  # >1% decrease  
-                    training_labels.append(1)  # SELL
-                else:
-                    training_labels.append(2)  # HOLD
+            # Add other feature groups (sentiment, orderbook) if available
+            try:
+                # Placeholder for sentiment (single value, timestamped)
+                sentiment_df = pd.DataFrame({'sentiment_score': [0.0] * len(valid_ohlcv)}, 
+                                         index=valid_ohlcv['timestamp'].values if 'timestamp' in valid_ohlcv.columns else valid_ohlcv.index)
+                features_by_group['sentiment'] = sentiment_df
+                
+                # Placeholder for orderbook (multiple features, timestamped) 
+                orderbook_cols = {f'orderbook_{i}': [0.0] * len(valid_ohlcv) for i in range(42)}
+                orderbook_df = pd.DataFrame(orderbook_cols,
+                                          index=valid_ohlcv['timestamp'].values if 'timestamp' in valid_ohlcv.columns else valid_ohlcv.index)
+                features_by_group['orderbook'] = orderbook_df
+            except Exception as e:
+                logger.debug(f"Error adding placeholders: {str(e)}")
             
-            # Add first label
-            training_labels = [2] + training_labels  # Start with HOLD
+            # Perform timestamp alignment
+            logger.info("🔗 Performing timestamp alignment...")
+            aligned_features, aligned_labels, common_timestamps = self._align_on_timestamps(
+                features_by_group, labels, label_timestamps
+            )
             
-            if len(training_labels) != len(ohlcv_data):
-                training_labels = training_labels[:len(ohlcv_data)]
+            if len(aligned_labels) == 0:
+                logger.warning("No valid samples after cleaning")
+                return False
             
-            logger.info(f"🎯 Training labels: BUY={training_labels.count(0)}, SELL={training_labels.count(1)}, HOLD={training_labels.count(2)}")
+            if len(aligned_labels) < min_samples:
+                logger.info(f"RFE samples={len(aligned_labels)} (<{min_samples} threshold) → using fallback ranking")
+                # Use fallback method in gating module
+                fallback_results = self.gating._perform_fallback_selection(aligned_features, aligned_labels, len(aligned_labels))
+                return len(fallback_results) > 0
             
-            # Perform RFE
-            rfe_results = self.gating.perform_rfe_selection(training_data, training_labels)
+            # Perform RFE with aligned data
+            logger.info(f"🎯 Running RFE on {len(aligned_labels)} aligned samples...")
+            rfe_results = self.gating.perform_rfe_selection(aligned_features, aligned_labels)
             
             if rfe_results:
+                # Get and log results
                 rfe_summary = self.gating.get_rfe_summary()
-                logger.info("🚀 RFE feature selection completed!")
-                logger.info(f"Selected {rfe_summary['total_selected']} features out of {len(indicators_result)} available")
-                logger.info(f"Feature breakdown: {rfe_summary['selection_breakdown']}")
+                weights_applied = self.gating.get_rfe_weights()
                 
-                # Log top selected features
-                if rfe_summary['top_features']:
-                    logger.info("🏆 Top selected features:")
-                    for i, feature in enumerate(rfe_summary['top_features'][:10]):
-                        logger.info(f"  {i+1}. {feature}")
+                # Count weight categories
+                strong_count = sum(1 for w in weights_applied.values() if w >= 0.7)
+                medium_count = sum(1 for w in weights_applied.values() if 0.3 <= w < 0.7) 
+                weak_count = sum(1 for w in weights_applied.values() if w < 0.3)
+                
+                logger.info(f"Applied RFE weights: strong={strong_count}, medium={medium_count}, weak={weak_count}")
+                logger.info("🚀 RFE feature selection completed!")
+                logger.info(f"Selected {rfe_summary['total_selected']} features out of {rfe_summary.get('total_available', 0)} available")
                 
                 return True
             else:
@@ -218,6 +485,11 @@ class TradingBot:
         Perform initial warmup training to avoid stuck confidence values
         """
         try:
+            # Check if warmup is enabled
+            if not self.config.get('training', {}).get('warmup_enabled', True):
+                logger.info("Warmup training disabled in configuration")
+                return
+            
             logger.info("🔥 Starting warmup training to initialize model weights...")
             
             # Collect recent data for warmup
@@ -320,7 +592,12 @@ class TradingBot:
             warmup_results = self.learner.perform_warmup_training(warmup_samples, max_batches=30)
             
             if warmup_results['batches_completed'] > 0:
-                logger.info(f"🚀 Warmup training completed: {warmup_results['batches_completed']} batches processed")
+                initial_loss = warmup_results.get('initial_loss', 'N/A')
+                final_loss = warmup_results.get('final_loss', 'N/A')
+                batches = warmup_results['batches_completed']
+                
+                logger.info(f"Warmup training: batches={batches} loss: {initial_loss} -> {final_loss}")
+                logger.info(f"🚀 Warmup training completed: {batches} batches processed")
                 
                 # Test prediction diversity after warmup
                 test_predictions = []
