@@ -430,25 +430,157 @@ def model_stats():
                 'status': 'active' if group_data['weight'] > 0.01 else 'inactive'
             }
     
-    # Add model performance metrics
-    enhanced_stats['performance_metrics'] = {
-        'training_accuracy': 0.847,
-        'validation_accuracy': 0.782,
-        'last_training_time': '2025-08-10T23:05:00Z',
-        'model_version': '1.2.3',
-        'feature_count': sum(1 for group_data in data_store['active_features'].values() 
-                           for weight in ([group_data.get('weight', 0)] if isinstance(group_data, dict) and 'weight' in group_data 
-                                        else [ind.get('weight', 0) for ind in group_data.values()] if group_name == 'indicators' else []))
-    }
+    # Add model performance metrics (replace mock data)
+    performance_metrics = {}
     
-    # Add recent model updates
-    enhanced_stats['recent_updates'] = [
-        {'timestamp': '2025-08-10T23:05:00Z', 'type': 'weights_update', 'accuracy_change': 0.025},
-        {'timestamp': '2025-08-10T23:00:00Z', 'type': 'feature_gating', 'features_changed': 3},
-        {'timestamp': '2025-08-10T22:55:00Z', 'type': 'model_retrain', 'accuracy_change': 0.018}
-    ]
+    if bot_instance and hasattr(bot_instance, 'learner'):
+        learner = bot_instance.learner
+        
+        # Get real metrics from learner
+        if hasattr(learner, 'performance_window') and learner.performance_window:
+            recent_success = sum(1 for p in learner.performance_window if p > 0.5)
+            training_accuracy = recent_success / len(learner.performance_window)
+        else:
+            training_accuracy = 0.0
+        
+        # Get validation accuracy from trade outcomes
+        if hasattr(learner, 'trade_outcomes') and learner.trade_outcomes:
+            successful_trades = sum(1 for outcome in learner.trade_outcomes if outcome > 0)
+            validation_accuracy = successful_trades / len(learner.trade_outcomes) if learner.trade_outcomes else 0.0
+        else:
+            validation_accuracy = 0.0
+        
+        performance_metrics = {
+            'training_accuracy': round(training_accuracy, 3),
+            'validation_accuracy': round(validation_accuracy, 3),
+            'last_training_time': learner.last_training_time.isoformat() if hasattr(learner, 'last_training_time') and learner.last_training_time else None,
+            'model_version': learner.model_version if hasattr(learner, 'model_version') else '1.0.0',
+            'feature_count': sum(1 for group_data in data_store['active_features'].values() 
+                               for weight in ([group_data.get('weight', 0)] if isinstance(group_data, dict) and 'weight' in group_data 
+                                            else [ind.get('weight', 0) for ind in group_data.values()] if group_name == 'indicators' else []))
+        }
+    else:
+        # Fallback if bot not available
+        performance_metrics = {
+            'training_accuracy': 0.0,
+            'validation_accuracy': 0.0,
+            'last_training_time': None,
+            'model_version': '1.0.0',
+            'feature_count': 0
+        }
+    
+    enhanced_stats['performance_metrics'] = performance_metrics
+    
+    # Add recent model updates (replace mock data)
+    recent_updates = []
+    
+    if bot_instance and hasattr(bot_instance, 'learner') and hasattr(bot_instance.learner, 'version_history'):
+        # Get recent updates from version history
+        version_history = bot_instance.learner.version_history[-3:]  # Last 3 updates
+        for update in reversed(version_history):  # Most recent first
+            recent_updates.append({
+                'timestamp': update['timestamp'],
+                'type': update['update_type'] + '_update',
+                'version_change': f"{update['from_version']} → {update['to_version']}"
+            })
+    
+    # Fallback if no real data available
+    if not recent_updates:
+        recent_updates = [
+            {'timestamp': None, 'type': 'no_updates', 'version_change': 'No updates available'}
+        ]
+    
+    enhanced_stats['recent_updates'] = recent_updates
     
     return jsonify(enhanced_stats)
+
+@app.route('/api/feature-selection')
+def feature_selection():
+    """Return detailed RFE feature selection results"""
+    try:
+        if bot_instance and hasattr(bot_instance, 'gating'):
+            gating = bot_instance.gating
+            
+            if gating.rfe_performed and gating.rfe_selected_features:
+                selected_features = [k for k, v in gating.rfe_selected_features.items() if v['selected']]
+                
+                result = {
+                    'rfe_performed': True,
+                    'method': 'RandomForestRFE' if hasattr(gating, 'rfe_model') else 'correlation',
+                    'last_run': datetime.now().isoformat(),  # Would be better to store actual timestamp
+                    'n_features_selected': len(selected_features),
+                    'total_features': len(gating.rfe_selected_features),
+                    'selected_features': selected_features,
+                    'ranked_features': [
+                        {
+                            'name': k,
+                            'rank': v['rank'],
+                            'importance': v['importance'],
+                            'selected': v['selected']
+                        }
+                        for k, v in sorted(gating.rfe_selected_features.items(), 
+                                         key=lambda x: x[1]['rank'])
+                    ]
+                }
+            else:
+                result = {
+                    'rfe_performed': False,
+                    'message': 'RFE feature selection not yet performed'
+                }
+        else:
+            result = {
+                'rfe_performed': False,
+                'message': 'Bot instance not available'
+            }
+            
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Error in feature-selection endpoint: {str(e)}")
+        return jsonify({
+            'rfe_performed': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/version-history')
+def version_history():
+    """Return chronological version history"""
+    try:
+        # Try to read from external file first
+        try:
+            import json
+            with open('version_history.json', 'r', encoding='utf-8') as f:
+                version_data = json.load(f)
+                return jsonify(version_data)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+        
+        # Fallback to bot instance
+        if bot_instance and hasattr(bot_instance, 'learner') and hasattr(bot_instance.learner, 'version_history'):
+            history = bot_instance.learner.version_history[-20:]  # Last 20 entries
+            
+            result = {
+                'current_version': bot_instance.learner.model_version,
+                'last_updated': datetime.now().isoformat(),
+                'total_entries': len(history),
+                'history': history
+            }
+        else:
+            result = {
+                'current_version': '1.0.0',
+                'last_updated': None,
+                'total_entries': 0,
+                'history': []
+            }
+            
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Error in version-history endpoint: {str(e)}")
+        return jsonify({
+            'current_version': '1.0.0',
+            'error': str(e)
+        }), 500
 
 @app.route('/api/plot')
 def plot():

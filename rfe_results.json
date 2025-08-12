@@ -1,0 +1,17 @@
+{
+  "timestamp": "2025-08-11T22:39:47.863600",
+  "method": "RandomForestRFE",
+  "n_features_selected": 1,
+  "total_features": 1,
+  "selected_features": {
+    "indicator.rsi": {
+      "rank": 1,
+      "importance": 0.8,
+      "selected": true
+    }
+  },
+  "feature_rankings": {
+    "indicator.rsi": 1
+  },
+  "rfe_n_features_target": 15
+}

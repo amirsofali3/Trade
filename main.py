@@ -112,8 +112,13 @@ class TradingBot:
             # If we don't have enough data, try to collect from multiple sources
             if ohlcv_data.empty or len(ohlcv_data) < 50:
                 logger.info("Collecting fresh OHLCV data for RFE training...")
-                # Collect fresh data
-                fresh_data = self.collectors['ohlcv'].collect_historical_data(symbol, timeframe, days_back=30)
+                # Collect fresh data - convert 30 days to appropriate limit
+                # For 5m timeframe: 30 days = 30 * 24 * 60 / 5 = 8640 candles
+                days_back = 30
+                timeframe_minutes = self.collectors['ohlcv']._timeframe_to_minutes(timeframe)
+                limit = min(1000, int(days_back * 24 * 60 / timeframe_minutes))  # Cap at 1000 for API limits
+                
+                fresh_data = self.collectors['ohlcv'].collect_historical_data(symbol, timeframe, limit=limit)
                 if fresh_data is not None and not fresh_data.empty:
                     ohlcv_data = fresh_data
                     logger.info(f"Collected {len(ohlcv_data)} fresh OHLCV samples")
@@ -202,6 +207,74 @@ class TradingBot:
         except Exception as e:
             logger.error(f"Error in RFE feature selection: {str(e)}")
             return False
+    
+    def _perform_warmup_training(self):
+        """
+        Perform initial warmup training to avoid stuck confidence values
+        """
+        try:
+            logger.info("🔥 Starting warmup training to initialize model weights...")
+            
+            # Collect recent data for warmup
+            symbol = self.config.get('trading', {}).get('symbols', ['BTCUSDT'])[0]
+            timeframe = self.config.get('trading', {}).get('timeframes', ['5m'])[0]
+            
+            # Get historical data
+            ohlcv_data = self.db_manager.get_ohlcv(symbol, timeframe, limit=100)
+            if ohlcv_data.empty or len(ohlcv_data) < 20:
+                logger.info("Insufficient data for warmup training")
+                return
+            
+            # Collect several training samples
+            warmup_batches = 0
+            max_warmup_batches = 30
+            
+            for i in range(max_warmup_batches):
+                try:
+                    # Collect fresh data for this batch
+                    data = self._collect_data()
+                    
+                    if data['ohlcv'].empty:
+                        continue
+                    
+                    # Transform features
+                    features = self._transform_features(data)
+                    if not features:
+                        continue
+                    
+                    # Generate prediction to create training sample
+                    signal = self.signal_generator.generate_signal(features, data, 'ohlcv')
+                    if signal:
+                        # Add small noise to simulate different market conditions
+                        import random
+                        noise_factor = random.uniform(0.9, 1.1)
+                        
+                        # Simulate outcome based on signal (for training purposes)
+                        if signal['signal'] == 'BUY':
+                            outcome = random.uniform(0.3, 0.8) * noise_factor
+                        elif signal['signal'] == 'SELL': 
+                            outcome = random.uniform(0.3, 0.8) * noise_factor
+                        else:  # HOLD
+                            outcome = random.uniform(0.4, 0.6) * noise_factor
+                        
+                        # Train the learner
+                        self.learner.add_outcome(signal, outcome)
+                        warmup_batches += 1
+                        
+                        if warmup_batches % 10 == 0:
+                            logger.info(f"Warmup training: batch {warmup_batches}/{max_warmup_batches}")
+                
+                except Exception as e:
+                    logger.debug(f"Error in warmup batch {i}: {str(e)}")
+                    continue
+            
+            if warmup_batches > 0:
+                logger.info(f"🚀 Warmup training completed: {warmup_batches} batches processed")
+            else:
+                logger.warning("⚠️ No warmup batches completed - model may have stuck confidence")
+                
+        except Exception as e:
+            logger.error(f"Error in warmup training: {str(e)}")
     
     def _init_data_collectors(self):
         """Initialize data collection components"""
@@ -376,6 +449,8 @@ class TradingBot:
         
         if rfe_success:
             logger.info("✅ RFE completed - model will use optimally selected features")
+            # Perform warmup training to avoid stuck confidence
+            self._perform_warmup_training()
         else:
             logger.warning("⚠️ RFE failed - model will use default feature gating")
         

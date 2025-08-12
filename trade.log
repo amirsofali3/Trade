@@ -489,3 +489,6 @@
 2025-08-11 01:00:26,708 - Main - INFO - Initializing components...
 2025-08-11 01:00:26,728 - DBManager - ERROR - Error creating database tables: (pymysql.err.OperationalError) (2003, "Can't connect to MySQL server on 'localhost' ([Errno 111] Connection refused)")
 (Background on this error at: https://sqlalche.me/e/20/e3q8)
+2025-08-11 22:33:19,878 - Main - INFO - Initializing components...
+2025-08-11 22:33:19,901 - DBManager - ERROR - Error creating database tables: (pymysql.err.OperationalError) (2003, "Can't connect to MySQL server on 'localhost' ([Errno 111] Connection refused)")
+(Background on this error at: https://sqlalche.me/e/20/e3q8)

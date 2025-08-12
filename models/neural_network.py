@@ -675,8 +675,52 @@ class OnlineLearner:
                 'updates_count': self.updates_counter
             })
             
+            # Save version history to external JSON file
+            self._save_version_history_to_file()
+            
         except Exception as e:
             logger.error(f"Error incrementing version: {str(e)}")
+    
+    def _save_version_history_to_file(self):
+        """Save version history to external JSON file"""
+        try:
+            import json
+            from datetime import datetime
+            
+            version_file = 'version_history.json'
+            
+            # Read existing history if file exists
+            existing_history = []
+            try:
+                with open(version_file, 'r', encoding='utf-8') as f:
+                    existing_data = json.load(f)
+                    existing_history = existing_data.get('history', [])
+            except (FileNotFoundError, json.JSONDecodeError):
+                pass
+            
+            # Merge with current history, avoiding duplicates
+            combined_history = existing_history.copy()
+            for entry in self.version_history:
+                if entry not in combined_history:
+                    combined_history.append(entry)
+            
+            # Keep only last 20 entries
+            combined_history = combined_history[-20:]
+            
+            version_data = {
+                'current_version': self.model_version,
+                'last_updated': datetime.now().isoformat(),
+                'total_entries': len(combined_history),
+                'history': combined_history
+            }
+            
+            with open(version_file, 'w', encoding='utf-8') as f:
+                json.dump(version_data, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"Version history updated (entries={len(combined_history)})")
+            
+        except Exception as e:
+            logger.error(f"Failed to save version history: {str(e)}")
     
     def _should_increment_version(self):
         """
