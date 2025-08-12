@@ -1,17 +1,168 @@
 {
-  "timestamp": "2025-08-11T22:39:47.863600",
+  "timestamp": "2025-08-12T11:57:24.181136",
   "method": "RandomForestRFE",
-  "n_features_selected": 1,
-  "total_features": 1,
-  "selected_features": {
-    "indicator.rsi": {
+  "ranked_features": [
+    {
+      "name": "indicator.sma",
       "rank": 1,
-      "importance": 0.8,
+      "importance": 0.09148367366078243,
       "selected": true
+    },
+    {
+      "name": "indicator.ema",
+      "rank": 1,
+      "importance": 0.1699248811210867,
+      "selected": true
+    },
+    {
+      "name": "indicator.rsi",
+      "rank": 1,
+      "importance": 0.15231355064334998,
+      "selected": true
+    },
+    {
+      "name": "indicator.macd",
+      "rank": 1,
+      "importance": 0.39767437536900174,
+      "selected": true
+    },
+    {
+      "name": "indicator.macd_signal",
+      "rank": 1,
+      "importance": 0.10011818269108443,
+      "selected": true
+    },
+    {
+      "name": "indicator.stoch_k",
+      "rank": 1,
+      "importance": 0.1144520470719006,
+      "selected": true
+    },
+    {
+      "name": "indicator.bbands_upper",
+      "rank": 1,
+      "importance": 0.5960481871571853,
+      "selected": true
+    },
+    {
+      "name": "indicator.bbands_middle",
+      "rank": 1,
+      "importance": 0.12804881718360225,
+      "selected": true
+    },
+    {
+      "name": "indicator.bbands_lower",
+      "rank": 1,
+      "importance": 0.5300081804210237,
+      "selected": true
+    },
+    {
+      "name": "indicator.supertrend",
+      "rank": 1,
+      "importance": 0.2075682468364846,
+      "selected": true
+    },
+    {
+      "name": "indicator.willr",
+      "rank": 1,
+      "importance": 0.36607465313092213,
+      "selected": true
+    },
+    {
+      "name": "indicator.mfi",
+      "rank": 1,
+      "importance": 0.5893328495180513,
+      "selected": true
+    },
+    {
+      "name": "indicator.ad",
+      "rank": 1,
+      "importance": 0.5253685091563078,
+      "selected": true
+    },
+    {
+      "name": "indicator.vwap",
+      "rank": 1,
+      "importance": 0.09083501809425075,
+      "selected": true
+    },
+    {
+      "name": "indicator.engulfing",
+      "rank": 1,
+      "importance": 0.3044101285287701,
+      "selected": true
+    },
+    {
+      "name": "ohlcv",
+      "rank": 2,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.macd_hist",
+      "rank": 2,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.stoch_d",
+      "rank": 2,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.adx",
+      "rank": 2,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.atr",
+      "rank": 2,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.obv",
+      "rank": 2,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "sentiment",
+      "rank": 2,
+      "importance": 0.01,
+      "selected": false
     }
+  ],
+  "selected": [
+    "indicator.sma",
+    "indicator.ema",
+    "indicator.rsi",
+    "indicator.macd",
+    "indicator.macd_signal",
+    "indicator.stoch_k",
+    "indicator.bbands_upper",
+    "indicator.bbands_middle",
+    "indicator.bbands_lower",
+    "indicator.supertrend",
+    "indicator.willr",
+    "indicator.mfi",
+    "indicator.ad",
+    "indicator.vwap",
+    "indicator.engulfing"
+  ],
+  "weights_mapping": {
+    "strong": 0,
+    "medium": 7,
+    "weak": 15
   },
-  "feature_rankings": {
-    "indicator.rsi": 1
-  },
-  "rfe_n_features_target": 15
+  "n_features_selected": 15,
+  "total_features": 22,
+  "rfe_n_features_target": 15,
+  "performance_summary": {
+    "selection_criteria": "Top features based on predictive importance or variance",
+    "weak_feature_handling": "Assigned minimum weight of 0.01",
+    "strong_feature_boost": "High-impact features receive proportional weights 0.7-0.9"
+  }
 }

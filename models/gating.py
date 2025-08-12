@@ -101,7 +101,7 @@ class FeatureGatingModule(nn.Module):
     
     def perform_rfe_selection(self, training_data, training_labels):
         """
-        Perform RFE feature selection before training starts
+        Perform RFE feature selection before training starts with improved length alignment
         
         Args:
             training_data: Training feature data as dict {group_name: features_array}
@@ -122,11 +122,66 @@ class FeatureGatingModule(nn.Module):
         logger.info("🔍 Starting RFE feature selection process...")
         
         try:
-            # Flatten all features into a single matrix
+            # First, align all feature arrays to common length before processing
+            feature_arrays = []
+            array_lengths = []
+            
+            # Collect all arrays and their lengths
+            for group_name, features in training_data.items():
+                if isinstance(features, np.ndarray):
+                    if features.ndim >= 2:
+                        array_lengths.append(features.shape[0])
+                    else:
+                        array_lengths.append(len(features))
+                    feature_arrays.append((group_name, features))
+            
+            # Add labels length to the calculation
+            array_lengths.append(len(training_labels))
+            
+            # Calculate common length - minimum of all arrays
+            if not array_lengths:
+                logger.warning("No valid feature arrays found")
+                return {}
+                
+            common_len = min(array_lengths)
+            logger.info(f"Length alignment: arrays={array_lengths}, common_len={common_len}")
+            
+            if common_len < 10:
+                logger.warning(f"Common length {common_len} too small for RFE, need at least 10 samples")
+                return {}
+            
+            # Align all arrays to common length (take last N samples)
+            aligned_training_data = {}
+            for group_name, features in feature_arrays:
+                if isinstance(features, np.ndarray):
+                    if features.ndim >= 2:
+                        aligned_training_data[group_name] = features[-common_len:]
+                    else:
+                        aligned_training_data[group_name] = features[-common_len:]
+            
+            aligned_labels = np.array(training_labels[-common_len:])
+            
+            # Check label diversity to avoid single-class issues
+            unique_labels = np.unique(aligned_labels)
+            if len(unique_labels) < 2:
+                logger.warning(f"Single-class labels detected: {unique_labels}. Need at least 2 classes for RFE.")
+                logger.info("Attempting label regeneration with smaller thresholds...")
+                
+                # Try to regenerate labels with smaller thresholds if we have price data
+                if 'ohlcv' in training_data:
+                    aligned_labels = self._generate_diverse_labels(aligned_training_data['ohlcv'], common_len)
+                    unique_labels = np.unique(aligned_labels)
+                    logger.info(f"Regenerated labels: BUY={np.sum(aligned_labels==0)}, SELL={np.sum(aligned_labels==1)}, HOLD={np.sum(aligned_labels==2)}")
+                
+                if len(unique_labels) < 2:
+                    logger.warning("Still single-class after regeneration → using fallback variance ranking")
+                    return self._perform_fallback_selection(aligned_training_data, aligned_labels, common_len)
+            
+            # Now process with aligned data
             feature_matrix = []
             feature_names = []
             
-            for group_name, features in training_data.items():
+            for group_name, features in aligned_training_data.items():
                 if group_name == 'indicator':
                     # For indicator group, we want individual feature selection
                     if isinstance(features, np.ndarray) and features.ndim >= 2:
@@ -181,22 +236,22 @@ class FeatureGatingModule(nn.Module):
                         feature_names.append(group_name)
             
             if not feature_matrix:
-                logger.warning("No features available for RFE")
+                logger.warning("No features available for RFE after alignment")
                 return {}
             
             # Transpose to get (samples, features) shape
             X = np.column_stack(feature_matrix)
-            y = np.array(training_labels)
+            y = aligned_labels
             
             # Remove samples with NaN/Inf
             valid_samples = ~(np.isnan(X).any(axis=1) | np.isinf(X).any(axis=1))
             X_clean = X[valid_samples]
             y_clean = y[valid_samples]
             
-            if len(X_clean) < 10:
-                logger.info(f"RFE samples={len(X_clean)} (<10 threshold) → using fallback correlation ranking")
-                # For very limited data, use correlation-based selection
-                return self._perform_correlation_based_selection(X_clean, y_clean, feature_names)
+            if len(X_clean) < 30:
+                logger.info(f"RFE samples={len(X_clean)} (<30 threshold) → using fallback ranking")
+                # For limited data, use fallback method
+                return self._perform_fallback_selection(aligned_training_data, y_clean, len(X_clean))
             
             if len(X_clean) < 50:
                 logger.info(f"Limited samples ({len(X_clean)}) - using simplified Random Forest")
@@ -289,6 +344,237 @@ class FeatureGatingModule(nn.Module):
             logger.error(f"Error during RFE: {str(e)}")
             return {}
     
+    def _generate_diverse_labels(self, ohlcv_data, common_len):
+        """
+        Generate diverse labels using lookahead and smaller thresholds to avoid single-class issue
+        
+        Args:
+            ohlcv_data: OHLCV data array
+            common_len: Target length for labels
+            
+        Returns:
+            Array of diverse labels (0=BUY, 1=SELL, 2=HOLD)
+        """
+        try:
+            # Extract close prices - handle different array shapes
+            if isinstance(ohlcv_data, np.ndarray):
+                if ohlcv_data.ndim == 2:
+                    # Assume close is last column or find close column
+                    close_prices = ohlcv_data[:, -1]  # Assume close is last column
+                else:
+                    close_prices = ohlcv_data  # 1D array
+            else:
+                logger.warning("Cannot extract close prices from OHLCV data")
+                return np.full(common_len, 2)  # All HOLD
+            
+            # Use lookahead approach with smaller thresholds
+            look_ahead = 3  # 3 candles forward
+            up_threshold = 0.002  # +0.2%
+            down_threshold = -0.002  # -0.2%
+            
+            labels = []
+            for i in range(common_len):
+                if i + look_ahead >= len(close_prices):
+                    # Not enough future data - label as HOLD
+                    labels.append(2)
+                    continue
+                
+                current_price = close_prices[i]
+                future_price = close_prices[i + look_ahead]
+                
+                if current_price == 0:  # Avoid division by zero
+                    labels.append(2)
+                    continue
+                
+                price_change = (future_price - current_price) / current_price
+                
+                if price_change > up_threshold:
+                    labels.append(0)  # BUY
+                elif price_change < down_threshold:
+                    labels.append(1)  # SELL
+                else:
+                    labels.append(2)  # HOLD
+            
+            # If still too few diverse labels, try even smaller thresholds
+            unique_labels = np.unique(labels)
+            if len(unique_labels) < 2:
+                logger.info("Reducing thresholds further to create diversity")
+                up_threshold = 0.001  # +0.1%
+                down_threshold = -0.001  # -0.1%
+                
+                labels = []
+                for i in range(common_len):
+                    if i + look_ahead >= len(close_prices):
+                        labels.append(2)
+                        continue
+                    
+                    current_price = close_prices[i]
+                    future_price = close_prices[i + look_ahead]
+                    
+                    if current_price == 0:
+                        labels.append(2)
+                        continue
+                    
+                    price_change = (future_price - current_price) / current_price
+                    
+                    if price_change > up_threshold:
+                        labels.append(0)  # BUY
+                    elif price_change < down_threshold:
+                        labels.append(1)  # SELL
+                    else:
+                        labels.append(2)  # HOLD
+            
+            return np.array(labels)
+            
+        except Exception as e:
+            logger.error(f"Error generating diverse labels: {str(e)}")
+            return np.full(common_len, 2)  # Fallback to all HOLD
+    
+    def _perform_fallback_selection(self, training_data, labels, n_samples):
+        """
+        Fallback feature selection using variance or correlation when RFE fails
+        
+        Args:
+            training_data: Aligned training data dict
+            labels: Target labels
+            n_samples: Number of samples
+            
+        Returns:
+            Dictionary with selected features
+        """
+        try:
+            logger.info(f"Using fallback selection with {n_samples} samples")
+            
+            # Choose method based on label diversity
+            unique_labels = np.unique(labels)
+            if len(unique_labels) >= 2:
+                method = 'correlation'
+                logger.info("Fallback method: correlation (sufficient label diversity)")
+            else:
+                method = 'variance'
+                logger.info("Fallback method: variance (insufficient label diversity)")
+            
+            feature_matrix = []
+            feature_names = []
+            
+            # Rebuild feature matrix from aligned data
+            for group_name, features in training_data.items():
+                if group_name == 'indicator':
+                    if isinstance(features, np.ndarray) and features.ndim >= 2:
+                        if features.ndim == 3:
+                            features_2d = np.mean(features, axis=1)
+                        else:
+                            features_2d = features
+                        
+                        indicator_names = [
+                            'sma', 'ema', 'rsi', 'macd', 'macd_signal', 'macd_hist',
+                            'stoch_k', 'stoch_d', 'bbands_upper', 'bbands_middle', 'bbands_lower',
+                            'adx', 'atr', 'supertrend', 'willr', 'mfi', 'obv', 'ad', 'vwap', 'engulfing'
+                        ]
+                        
+                        n_features = min(features_2d.shape[1], len(indicator_names))
+                        for i in range(n_features):
+                            feature_matrix.append(features_2d[:, i])
+                            feat_name = indicator_names[i] if i < len(indicator_names) else f"indicator_{i+1}"
+                            feature_names.append(f"{group_name}.{feat_name}")
+                else:
+                    if isinstance(features, np.ndarray):
+                        if features.ndim == 1:
+                            feature_matrix.append(features)
+                        elif features.ndim == 2:
+                            feature_matrix.append(np.mean(features, axis=1))
+                        else:
+                            reshaped = features.reshape(features.shape[0], -1)
+                            feature_matrix.append(np.mean(reshaped, axis=1))
+                        feature_names.append(group_name)
+            
+            if not feature_matrix:
+                logger.warning("No features for fallback selection")
+                return {}
+            
+            X = np.column_stack(feature_matrix)
+            
+            # Remove NaN/Inf
+            valid_samples = ~(np.isnan(X).any(axis=1) | np.isinf(X).any(axis=1))
+            X_clean = X[valid_samples]
+            
+            if len(X_clean) == 0:
+                logger.warning("No valid samples after cleaning")
+                return {}
+            
+            scores = []
+            
+            if method == 'variance':
+                # Use variance for feature ranking
+                for i in range(X_clean.shape[1]):
+                    col_var = np.var(X_clean[:, i])
+                    scores.append(col_var if not np.isnan(col_var) else 0.0)
+                logger.info(f"Variance scores: min={min(scores):.6f}, max={max(scores):.6f}")
+                
+            else:  # correlation
+                # Use correlation with labels
+                y_clean = labels[valid_samples] if len(labels) == len(valid_samples) else labels[:len(X_clean)]
+                
+                for i in range(X_clean.shape[1]):
+                    try:
+                        # Calculate correlation, handle division by zero and NaN
+                        col_data = X_clean[:, i]
+                        if np.std(col_data) == 0:  # Constant feature
+                            corr = 0.0
+                        else:
+                            corr_coef = np.corrcoef(col_data, y_clean)[0, 1]
+                            corr = abs(corr_coef) if not np.isnan(corr_coef) else 0.0
+                        scores.append(corr)
+                    except:
+                        scores.append(0.0)
+                logger.info(f"Correlation scores: min={min(scores):.6f}, max={max(scores):.6f}")
+            
+            # Select top features
+            n_features_to_select = min(self.rfe_n_features, len(scores))
+            top_indices = np.argsort(scores)[-n_features_to_select:]
+            
+            # Create results
+            self.rfe_selected_features = {}
+            self.rfe_feature_rankings = {}
+            
+            for i, feature_name in enumerate(feature_names):
+                is_selected = i in top_indices
+                score = scores[i]
+                
+                self.rfe_selected_features[feature_name] = {
+                    'rank': 1 if is_selected else 2,
+                    'importance': score if is_selected else 0.01,
+                    'selected': is_selected
+                }
+                self.rfe_feature_rankings[feature_name] = 1 if is_selected else 2
+            
+            # Update feature performance tracking
+            for group_name in self.feature_performance:
+                if group_name == 'indicator':
+                    selected_indicators = [name for name in self.rfe_selected_features.keys() 
+                                         if name.startswith('indicator.') and self.rfe_selected_features[name]['selected']]
+                    self.feature_performance[group_name]['rfe_selected'] = len(selected_indicators) > 0
+                    self.feature_performance[group_name]['rfe_rank'] = min([
+                        self.rfe_selected_features[name]['rank'] for name in selected_indicators
+                    ]) if selected_indicators else 999
+                else:
+                    if group_name in self.rfe_selected_features:
+                        self.feature_performance[group_name]['rfe_selected'] = self.rfe_selected_features[group_name]['selected']
+                        self.feature_performance[group_name]['rfe_rank'] = self.rfe_selected_features[group_name]['rank']
+            
+            self.rfe_performed = True
+            
+            # Save results to file
+            self._save_rfe_results_to_file()
+            
+            logger.info(f"Fallback selection completed using {method}: selected {len(top_indices)} features")
+            
+            return self.rfe_selected_features
+            
+        except Exception as e:
+            logger.error(f"Error in fallback selection: {str(e)}")
+            return {}
+    
     def _perform_correlation_based_selection(self, X, y, feature_names):
         """
         Simplified feature selection for very limited data using correlation
@@ -355,7 +641,7 @@ class FeatureGatingModule(nn.Module):
     
     def get_rfe_weights(self):
         """
-        Get feature weights based on RFE results
+        Get feature weights based on RFE results with enhanced strong/medium/weak mapping
         
         Returns:
             Dictionary with weights for each feature group
@@ -364,6 +650,20 @@ class FeatureGatingModule(nn.Module):
             return {}
         
         weights = {}
+        
+        # Collect all selected features and their rankings for proper weight assignment
+        all_selected = [(name, info) for name, info in self.rfe_selected_features.items() if info['selected']]
+        all_selected.sort(key=lambda x: x[1]['importance'], reverse=True)  # Sort by importance
+        
+        # Categorize features: strong (top selected), medium (next 2x selected), weak (rest)
+        n_selected = len(all_selected)
+        strong_count = min(self.rfe_n_features, n_selected)  # Top selected features
+        medium_count = min(strong_count * 2, n_selected - strong_count)  # Next 2x features
+        
+        strong_features = set(item[0] for item in all_selected[:strong_count])
+        medium_features = set(item[0] for item in all_selected[strong_count:strong_count + medium_count])
+        
+        logger.info(f"Weight mapping: strong={len(strong_features)}, medium={len(medium_features)}, weak={len(self.rfe_selected_features) - len(strong_features) - len(medium_features)}")
         
         for group_name, group_dim in self.feature_groups.items():
             if group_name == 'indicator':
@@ -374,24 +674,45 @@ class FeatureGatingModule(nn.Module):
                     'sma', 'ema', 'rsi', 'macd', 'macd_signal', 'macd_hist',
                     'stoch_k', 'stoch_d', 'bbands_upper', 'bbands_middle', 'bbands_lower',
                     'adx', 'atr', 'supertrend', 'willr', 'mfi', 'obv', 'ad', 'vwap',
-                    'engulfing'  # Plus 80 more...
+                    'engulfing', 'ppo', 'psar', 'trix', 'dmi', 'aroon', 'cci', 'dpo', 
+                    'kst', 'ichimoku', 'tema', 'roc', 'momentum', 'bop', 'apo', 'cmo',
+                    'rsi_2', 'rsi_14', 'stoch_fast', 'stoch_slow', 'ultimate_osc', 
+                    'kama', 'fisher', 'awesome_osc', 'bias', 'dmi_adx', 'tsi'
                 ]
+                
+                # Count strong, medium, weak indicators for this group
+                strong_indicators = []
+                medium_indicators = []
                 
                 for i, ind_name in enumerate(indicator_names[:group_dim]):
                     feat_key = f"indicator.{ind_name}"
-                    if feat_key in self.rfe_selected_features and self.rfe_selected_features[feat_key]['selected']:
-                        # Strong weight for selected features
-                        importance = self.rfe_selected_features[feat_key]['importance']
-                        group_weights[i] = max(0.7, importance)  # At least 70% weight for selected
+                    
+                    if feat_key in strong_features:
+                        strong_indicators.append(i)
+                    elif feat_key in medium_features:
+                        medium_indicators.append(i)
+                
+                # Apply weights with proper distribution
+                if strong_indicators:
+                    strong_weights = np.linspace(0.7, 0.9, len(strong_indicators))
+                    for idx, i in enumerate(strong_indicators):
+                        group_weights[i] = strong_weights[idx]
+                
+                if medium_indicators:
+                    medium_weights = np.linspace(0.3, 0.7, len(medium_indicators))
+                    for idx, i in enumerate(medium_indicators):
+                        group_weights[i] = medium_weights[idx]
                 
                 weights[group_name] = group_weights
+                
             else:
-                # For other groups
-                if group_name in self.rfe_selected_features and self.rfe_selected_features[group_name]['selected']:
-                    importance = self.rfe_selected_features[group_name]['importance']
-                    weight_val = max(0.7, importance)
+                # For other groups, assign based on category
+                if group_name in strong_features:
+                    weight_val = 0.8  # Strong weight
+                elif group_name in medium_features:
+                    weight_val = 0.5  # Medium weight
                 else:
-                    weight_val = self.min_weight
+                    weight_val = self.min_weight  # Weak weight
                 
                 weights[group_name] = torch.full((group_dim,), weight_val)
         
@@ -417,20 +738,52 @@ class FeatureGatingModule(nn.Module):
         logger.info(f"Applied RFE weights: strong={strong_count}, medium={medium_count}, weak={weak_count}")
     
     def _save_rfe_results_to_file(self):
-        """Save RFE results to external JSON file"""
+        """Save RFE results to external JSON file with enhanced format"""
         try:
             import os
             import json
             from datetime import datetime
             
+            # Determine method used
+            method = 'variance' if not hasattr(self, 'rfe_model') else 'RandomForestRFE'
+            
+            # Create ranked features list
+            ranked_features = []
+            for name, info in self.rfe_selected_features.items():
+                ranked_features.append({
+                    'name': name,
+                    'rank': info['rank'],
+                    'importance': info['importance'],
+                    'selected': info['selected']
+                })
+            
+            # Sort by rank (lower is better)
+            ranked_features.sort(key=lambda x: x['rank'])
+            
+            # Selected features only
+            selected_features = [f['name'] for f in ranked_features if f['selected']]
+            
+            # Weight mapping summary
+            weights_mapping = {
+                'strong': len([f for f in ranked_features if f['selected'] and f['importance'] >= 0.7]),
+                'medium': len([f for f in ranked_features if f['selected'] and 0.3 <= f['importance'] < 0.7]),
+                'weak': len([f for f in ranked_features if not f['selected'] or f['importance'] < 0.3])
+            }
+            
             rfe_data = {
                 'timestamp': datetime.now().isoformat(),
-                'method': 'RandomForestRFE' if hasattr(self, 'rfe_model') else 'correlation',
-                'n_features_selected': len([f for f in self.rfe_selected_features.values() if f['selected']]),
+                'method': method,
+                'ranked_features': ranked_features,
+                'selected': selected_features,
+                'weights_mapping': weights_mapping,
+                'n_features_selected': len(selected_features),
                 'total_features': len(self.rfe_selected_features),
-                'selected_features': {k: v for k, v in self.rfe_selected_features.items() if v['selected']},
-                'feature_rankings': self.rfe_feature_rankings,
-                'rfe_n_features_target': self.rfe_n_features
+                'rfe_n_features_target': self.rfe_n_features,
+                'performance_summary': {
+                    'selection_criteria': 'Top features based on predictive importance or variance',
+                    'weak_feature_handling': f'Assigned minimum weight of {self.min_weight}',
+                    'strong_feature_boost': 'High-impact features receive proportional weights 0.7-0.9'
+                }
             }
             
             rfe_file = 'rfe_results.json'
@@ -441,6 +794,49 @@ class FeatureGatingModule(nn.Module):
             
         except Exception as e:
             logger.error(f"Failed to save RFE results: {str(e)}")
+    
+    def get_rfe_summary(self):
+        """
+        Get RFE summary for API and logging
+        
+        Returns:
+            Dictionary with RFE summary information
+        """
+        if not self.rfe_performed:
+            return {
+                'rfe_performed': False,
+                'total_selected': 0,
+                'target_features': self.rfe_n_features,
+                'selection_breakdown': {},
+                'top_features': []
+            }
+        
+        selected_features = [name for name, info in self.rfe_selected_features.items() if info['selected']]
+        
+        # Group breakdown
+        selection_breakdown = {}
+        for name, info in self.rfe_selected_features.items():
+            group = name.split('.')[0] if '.' in name else name
+            if group not in selection_breakdown:
+                selection_breakdown[group] = {'total': 0, 'selected': 0}
+            selection_breakdown[group]['total'] += 1
+            if info['selected']:
+                selection_breakdown[group]['selected'] += 1
+        
+        # Top features by importance
+        top_features = sorted(
+            [(name, info['importance']) for name, info in self.rfe_selected_features.items() if info['selected']],
+            key=lambda x: x[1], reverse=True
+        )
+        top_feature_names = [name for name, _ in top_features[:10]]
+        
+        return {
+            'rfe_performed': True,
+            'total_selected': len(selected_features),
+            'target_features': self.rfe_n_features,
+            'selection_breakdown': selection_breakdown,
+            'top_features': top_feature_names
+        }
     
     def forward(self, features_dict):
         """

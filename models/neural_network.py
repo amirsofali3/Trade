@@ -19,11 +19,11 @@ class MarketTransformer(nn.Module):
     
     def __init__(self, feature_dims, hidden_dim=128, n_layers=2, n_heads=4, dropout=0.1):
         """
-        Initialize Market Transformer
+        Initialize Market Transformer with projection layers for consistent dimensions
         
         Args:
             feature_dims: Dictionary with feature dimensions
-                Example: {'ohlcv': (20, 13), 'indicator': (20, 30), 'sentiment': (1, 1), 'orderbook': (1, 42)}
+                Example: {'ohlcv': (20, 13), 'indicator': (20, 100), 'sentiment': (1, 1), 'orderbook': (1, 42)}
                 Format is (seq_len, feature_dim)
             hidden_dim: Hidden dimension for transformer
             n_layers: Number of transformer layers
@@ -37,17 +37,23 @@ class MarketTransformer(nn.Module):
         # Calculate total feature dimension
         self.total_feature_dim = sum(dim[1] for dim in feature_dims.values())
         
-        # Feature embedding layers
+        # Feature embedding layers - these project all inputs to hidden_dim for consistency
         self.embeddings = nn.ModuleDict()
+        
+        # Projection layers to map each feature group to hidden_dim (fixes 128 vs 100 issue)
+        self.projections = nn.ModuleDict()
+        
         for name, (seq_len, dim) in feature_dims.items():
-            self.embeddings[name] = nn.Linear(dim, hidden_dim)
+            # Projection layer maps input features to hidden_dim
+            self.projections[name] = nn.Linear(dim, hidden_dim)
+            # Embedding layer for further processing
+            self.embeddings[name] = nn.Linear(hidden_dim, hidden_dim)
+            
+            logger.debug(f"Created projection for {name}: {dim} → {hidden_dim}")
         
         # Position encoding
         max_seq_len = max(dim[0] for dim in feature_dims.values())
         self.position_encoding = self._create_position_encoding(max_seq_len, hidden_dim)
-        
-        # Create transformers for each feature type and a merged transformer
-        self.transformers = nn.ModuleDict()
         
         # Common transformer encoder layer for all features
         encoder_layer = nn.TransformerEncoderLayer(
@@ -223,20 +229,38 @@ class MarketTransformer(nn.Module):
                         padded[:x.size(0)] = x
                         x = padded.view(1, expected_seq_len, expected_feature_dim)
                 
-                # Embed features to hidden_dim
+                # First, project features to hidden_dim to ensure consistency (fixes tensor size mismatch)
                 if name in ['ohlcv', 'indicator', 'tick_data']:
-                    # Sequential features: embed each timestep
+                    # Sequential features: project each timestep
                     # x shape: (1, seq_len, feature_dim)
                     batch_size, seq_len, feature_dim = x.shape
                     x_flat = x.view(-1, feature_dim)  # (batch_size * seq_len, feature_dim)
-                    embedded_flat = self.embeddings[name](x_flat)  # (batch_size * seq_len, hidden_dim)
+                    
+                    logger.debug(f"Processing {name}: input shape {x.shape} -> flat shape {x_flat.shape}")
+                    
+                    # Project to hidden_dim first
+                    projected_flat = self.projections[name](x_flat)  # (batch_size * seq_len, hidden_dim)
+                    projected = projected_flat.view(batch_size, seq_len, self.hidden_dim)
+                    
+                    # Then apply embedding layer
+                    embedded_flat = self.embeddings[name](projected_flat)  # (batch_size * seq_len, hidden_dim)
                     embedded = embedded_flat.view(batch_size, seq_len, self.hidden_dim)
+                    
+                    logger.debug(f"After projection and embedding {name}: shape {embedded.shape}")
                 else:
-                    # Non-sequential features: embed directly
+                    # Non-sequential features: project directly
                     # x shape: (1, feature_dim)
-                    embedded = self.embeddings[name](x)
+                    logger.debug(f"Processing {name}: input shape {x.shape}")
+                    
+                    # Project to hidden_dim first
+                    projected = self.projections[name](x)  # (1, hidden_dim)
+                    
+                    # Then apply embedding layer
+                    embedded = self.embeddings[name](projected)  # (1, hidden_dim)
                     # Expand to sequence length for compatibility
                     embedded = embedded.unsqueeze(1)  # (1, 1, hidden_dim)
+                    
+                    logger.debug(f"After projection and embedding {name}: shape {embedded.shape}")
                 
                 # Add position encoding for sequential features
                 if name == 'ohlcv' or name == 'indicator' or name == 'tick_data':
@@ -258,8 +282,11 @@ class MarketTransformer(nn.Module):
         for feat in embedded_features:
             if feat.shape[1] < max_seq_len:
                 # Expand by repeating the last timestep
-                last_timestep = feat[:, -1:, :].expand(-1, max_seq_len - feat.shape[1], -1)
-                feat_expanded = torch.cat([feat, last_timestep], dim=1)
+                seq_diff = max_seq_len - feat.shape[1]
+                last_timestep = feat[:, -1:, :]  # (batch, 1, hidden_dim)
+                # Repeat the last timestep to fill sequence
+                repeated = last_timestep.expand(-1, seq_diff, -1)  # Expand along sequence dim
+                feat_expanded = torch.cat([feat, repeated], dim=1)
             else:
                 feat_expanded = feat
             expanded_features.append(feat_expanded)
@@ -369,6 +396,215 @@ class OnlineLearner:
         
         logger.info(f"Initialized Enhanced OnlineLearner with feedback learning")
         logger.info(f"Buffer size: {buffer_size}, Batch size: {batch_size}, Update interval: {update_interval}s")
+    
+    def perform_warmup_training(self, warmup_data, max_batches=30):
+        """
+        Perform warmup training to initialize model weights and avoid stuck confidence
+        
+        Args:
+            warmup_data: List of training samples [(features_dict, label), ...]
+            max_batches: Maximum number of warmup batches to run
+            
+        Returns:
+            Dictionary with warmup training results
+        """
+        logger.info(f"🔥 Starting warmup training with {len(warmup_data)} samples, max_batches={max_batches}")
+        
+        if len(warmup_data) < 5:
+            logger.warning("Insufficient data for warmup training")
+            return {'batches_completed': 0, 'final_loss': None}
+        
+        try:
+            initial_loss = None
+            final_loss = None
+            batches_completed = 0
+            
+            # Set model to training mode
+            self.model.train()
+            
+            # Adjust learning rate for warmup (typically higher)
+            original_lr = self.optimizer.param_groups[0]['lr']
+            warmup_lr = original_lr * 2.0  # Double the learning rate for warmup
+            
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = warmup_lr
+            
+            logger.info(f"Warmup learning rate: {warmup_lr} (original: {original_lr})")
+            
+            for batch_idx in range(max_batches):
+                try:
+                    # Sample random batch from warmup data
+                    batch_size = min(self.batch_size, len(warmup_data))
+                    batch_indices = np.random.choice(len(warmup_data), size=batch_size, replace=False)
+                    batch_samples = [warmup_data[i] for i in batch_indices]
+                    
+                    # Prepare batch
+                    batch_features = {}
+                    batch_labels = []
+                    
+                    for features_dict, label in batch_samples:
+                        # Collect features
+                        for name, tensor in features_dict.items():
+                            if name not in batch_features:
+                                batch_features[name] = []
+                            
+                            # Ensure tensor is on correct device and has right shape
+                            if isinstance(tensor, torch.Tensor):
+                                batch_features[name].append(tensor.detach())
+                            else:
+                                batch_features[name].append(torch.tensor(tensor))
+                        
+                        batch_labels.append(label)
+                    
+                    # Stack tensors
+                    stacked_features = {}
+                    for name in batch_features:
+                        try:
+                            stacked_features[name] = torch.stack(batch_features[name])
+                        except Exception as e:
+                            logger.warning(f"Could not stack {name} tensors: {str(e)}")
+                            # Use first tensor with proper batch dimension
+                            stacked_features[name] = batch_features[name][0].unsqueeze(0)
+                    
+                    batch_labels_tensor = torch.tensor(batch_labels, dtype=torch.long)
+                    
+                    # Forward pass
+                    self.optimizer.zero_grad()
+                    logits, confidences = self.model(stacked_features)
+                    
+                    # Calculate loss
+                    loss = F.cross_entropy(logits, batch_labels_tensor)
+                    
+                    if batch_idx == 0:
+                        initial_loss = loss.item()
+                    final_loss = loss.item()
+                    
+                    # Backward pass
+                    loss.backward()
+                    
+                    # Clip gradients
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                    
+                    # Update weights
+                    self.optimizer.step()
+                    
+                    batches_completed += 1
+                    
+                    # Log progress every 10 batches
+                    if (batch_idx + 1) % 10 == 0:
+                        avg_confidence = torch.mean(confidences).item()
+                        logger.info(f"Warmup batch {batch_idx + 1}/{max_batches}: loss={loss.item():.4f}, avg_confidence={avg_confidence:.4f}")
+                    
+                    # Early stopping if loss becomes very low
+                    if loss.item() < 0.1:
+                        logger.info(f"Early stopping warmup at batch {batch_idx + 1} due to low loss")
+                        break
+                        
+                except Exception as e:
+                    logger.error(f"Error in warmup batch {batch_idx}: {str(e)}")
+                    continue
+            
+            # Restore original learning rate
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = original_lr
+            
+            # Set model back to eval mode
+            self.model.eval()
+            
+            warmup_results = {
+                'batches_completed': batches_completed,
+                'initial_loss': initial_loss,
+                'final_loss': final_loss,
+                'loss_improvement': (initial_loss - final_loss) if initial_loss and final_loss else 0
+            }
+            
+            if batches_completed > 0:
+                logger.info(f"🚀 Warmup training completed: {batches_completed} batches, loss: {initial_loss:.4f} → {final_loss:.4f}")
+            else:
+                logger.warning("⚠️ No warmup batches completed - model may have stuck confidence")
+            
+            return warmup_results
+            
+        except Exception as e:
+            logger.error(f"Error during warmup training: {str(e)}")
+            return {'batches_completed': 0, 'final_loss': None, 'error': str(e)}
+    
+    def check_prediction_diversity(self, recent_predictions, threshold=0.01):
+        """
+        Check if the model predictions are too similar (stuck confidence issue)
+        
+        Args:
+            recent_predictions: List of recent prediction tensors or confidences
+            threshold: Minimum variance required for healthy diversity
+            
+        Returns:
+            Dictionary with diversity analysis
+        """
+        try:
+            if len(recent_predictions) < 5:
+                return {'diverse': True, 'reason': 'insufficient_data', 'variance': None}
+            
+            # Extract confidence values
+            confidences = []
+            logits_std = []
+            
+            for pred in recent_predictions:
+                if isinstance(pred, tuple) and len(pred) == 2:
+                    # (probs, confidence) tuple
+                    probs, confidence = pred
+                    confidences.append(confidence.item() if hasattr(confidence, 'item') else float(confidence))
+                    
+                    # Calculate standard deviation of logits (before softmax)
+                    if hasattr(probs, 'std'):
+                        logits_std.append(probs.std().item())
+                    else:
+                        logits_std.append(np.std(probs) if hasattr(probs, '__iter__') else 0.0)
+                        
+                elif isinstance(pred, (int, float)):
+                    confidences.append(float(pred))
+                    logits_std.append(0.0)
+                else:
+                    # Try to extract confidence from tensor
+                    if hasattr(pred, 'max'):
+                        conf = pred.max().item() if hasattr(pred.max(), 'item') else float(pred.max())
+                        confidences.append(conf)
+                        std_val = pred.std().item() if hasattr(pred.std(), 'item') else float(pred.std())
+                        logits_std.append(std_val)
+                    else:
+                        confidences.append(0.5)  # Default
+                        logits_std.append(0.0)
+            
+            # Calculate variance metrics
+            confidence_std = np.std(confidences) if len(confidences) > 1 else 0.0
+            avg_logits_std = np.mean(logits_std) if logits_std else 0.0
+            confidence_range = max(confidences) - min(confidences) if confidences else 0.0
+            
+            # Determine if predictions are diverse enough
+            is_diverse = (
+                confidence_std > threshold or 
+                avg_logits_std > threshold or
+                confidence_range > threshold * 3
+            )
+            
+            diversity_info = {
+                'diverse': is_diverse,
+                'confidence_std': confidence_std,
+                'logits_std': avg_logits_std,
+                'confidence_range': confidence_range,
+                'threshold': threshold,
+                'sample_count': len(confidences),
+                'avg_confidence': np.mean(confidences) if confidences else 0.0
+            }
+            
+            if not is_diverse:
+                diversity_info['reason'] = 'low_variance'
+                logger.info(f"Prediction diversity check: logits_std={avg_logits_std:.6f}, confidence_std={confidence_std:.6f} (threshold={threshold})")
+            
+            return diversity_info
+            
+        except Exception as e:
+            logger.error(f"Error checking prediction diversity: {str(e)}")
+            return {'diverse': True, 'reason': 'error', 'error': str(e)}
     
     def start(self):
         """Start the online learning process"""
@@ -819,6 +1055,21 @@ class OnlineLearner:
         
         except Exception as e:
             logger.error(f"Error saving model: {str(e)}")
+    
+    def get_version_info(self):
+        """
+        Get detailed version information for API endpoints
+        
+        Returns:
+            Dictionary with version details
+        """
+        return {
+            'current_version': self.model_version,
+            'updates_count': self.updates_counter,
+            'version_history': self.version_history[-5:],  # Last 5 versions
+            'last_major_update': self.last_major_update.isoformat(),
+            'total_versions': len(self.version_history)
+        }
     
     def load_model(self, checkpoint_path):
         """

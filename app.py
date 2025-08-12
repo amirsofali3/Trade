@@ -443,10 +443,25 @@ def model_stats():
         else:
             training_accuracy = 0.0
         
-        # Get validation accuracy from trade outcomes
+        # Get validation accuracy from trade outcomes - fix TypeError with type-safe handling
         if hasattr(learner, 'trade_outcomes') and learner.trade_outcomes:
-            successful_trades = sum(1 for outcome in learner.trade_outcomes if outcome > 0)
-            validation_accuracy = successful_trades / len(learner.trade_outcomes) if learner.trade_outcomes else 0.0
+            # Handle both dict and list formats for trade_outcomes
+            if isinstance(learner.trade_outcomes, dict):
+                # Dictionary format: get successful/failed counts
+                successful_trades = int(learner.trade_outcomes.get('successful_trades', 0))
+                failed_trades = int(learner.trade_outcomes.get('failed_trades', 0))
+                total_trades = successful_trades + failed_trades
+                validation_accuracy = successful_trades / total_trades if total_trades > 0 else 0.0
+            elif isinstance(learner.trade_outcomes, list):
+                # List format: count positive outcomes
+                try:
+                    successful_trades = sum(1 for outcome in learner.trade_outcomes if isinstance(outcome, (int, float)) and outcome > 0)
+                    validation_accuracy = successful_trades / len(learner.trade_outcomes) if learner.trade_outcomes else 0.0
+                except (TypeError, ValueError):
+                    # Fallback for mixed data types
+                    validation_accuracy = 0.0
+            else:
+                validation_accuracy = 0.0
         else:
             validation_accuracy = 0.0
         
@@ -498,6 +513,16 @@ def model_stats():
 def feature_selection():
     """Return detailed RFE feature selection results"""
     try:
+        # First try to read from external JSON file
+        try:
+            import json
+            with open('rfe_results.json', 'r', encoding='utf-8') as f:
+                rfe_data = json.load(f)
+                return jsonify(rfe_data)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+        
+        # Fallback to bot instance data
         if bot_instance and hasattr(bot_instance, 'gating'):
             gating = bot_instance.gating
             
@@ -506,8 +531,8 @@ def feature_selection():
                 
                 result = {
                     'rfe_performed': True,
-                    'method': 'RandomForestRFE' if hasattr(gating, 'rfe_model') else 'correlation',
-                    'last_run': datetime.now().isoformat(),  # Would be better to store actual timestamp
+                    'method': 'RandomForestRFE' if hasattr(gating, 'rfe_model') and gating.rfe_model else 'fallback',
+                    'last_run': datetime.now().isoformat(),
                     'n_features_selected': len(selected_features),
                     'total_features': len(gating.rfe_selected_features),
                     'selected_features': selected_features,
@@ -520,7 +545,12 @@ def feature_selection():
                         }
                         for k, v in sorted(gating.rfe_selected_features.items(), 
                                          key=lambda x: x[1]['rank'])
-                    ]
+                    ],
+                    'weights_mapping': {
+                        'strong': len([f for f in gating.rfe_selected_features.values() if f['selected'] and f['importance'] >= 0.7]),
+                        'medium': len([f for f in gating.rfe_selected_features.values() if f['selected'] and 0.3 <= f['importance'] < 0.7]),
+                        'weak': len([f for f in gating.rfe_selected_features.values() if not f['selected'] or f['importance'] < 0.3])
+                    }
                 }
             else:
                 result = {

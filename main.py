@@ -10,7 +10,7 @@ import json
 import pandas as pd
 import numpy as np
 
-# تنظیم لاگر با پشتیبانی UTF-8
+# تنظیم لاگر با پشتیبانی UTF-8 - fixed encoding issues
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -20,10 +20,15 @@ logging.basicConfig(
     ]
 )
 
-# Fix encoding for stdout handler
+# Fix encoding for stdout handler - ensure UTF-8 support
 for handler in logging.getLogger().handlers:
     if isinstance(handler, logging.StreamHandler) and handler.stream == sys.stdout:
-        handler.stream = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
+        try:
+            handler.stream = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
+        except Exception:
+            # Fallback: set environment variable
+            import os
+            os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 logger = logging.getLogger("Main")
 
@@ -225,51 +230,114 @@ class TradingBot:
                 logger.info("Insufficient data for warmup training")
                 return
             
-            # Collect several training samples
-            warmup_batches = 0
-            max_warmup_batches = 30
+            # Prepare warmup data samples
+            warmup_samples = []
             
-            for i in range(max_warmup_batches):
+            # Collect several training samples
+            for i in range(min(50, len(ohlcv_data) - 3)):  # Up to 50 samples, leave room for lookahead
                 try:
-                    # Collect fresh data for this batch
-                    data = self._collect_data()
+                    # Use historical data slice
+                    sample_data = ohlcv_data.iloc[i:i+20]
+                    if len(sample_data) < 20:
+                        continue
                     
-                    if data['ohlcv'].empty:
+                    # Calculate indicators for this sample
+                    indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe)
+                    if not indicators_result:
                         continue
                     
                     # Transform features
-                    features = self._transform_features(data)
-                    if not features:
+                    features = {}
+                    
+                    # OHLCV features
+                    try:
+                        ohlcv_features = self.encoders['ohlcv'].transform(sample_data)
+                        features['ohlcv'] = ohlcv_features
+                    except Exception as e:
+                        logger.debug(f"Error transforming OHLCV for warmup sample {i}: {str(e)}")
                         continue
                     
-                    # Generate prediction to create training sample
-                    signal = self.signal_generator.generate_signal(features, data, 'ohlcv')
-                    if signal:
-                        # Add small noise to simulate different market conditions
-                        import random
-                        noise_factor = random.uniform(0.9, 1.1)
+                    # Indicator features (sample from available)
+                    try:
+                        sample_indicators = {}
+                        for name, values in indicators_result.items():
+                            if isinstance(values, list) and len(values) > i:
+                                # Take a window around this sample
+                                start_idx = max(0, i - 10)
+                                end_idx = min(len(values), i + 10)
+                                sample_indicators[name] = values[start_idx:end_idx]
                         
-                        # Simulate outcome based on signal (for training purposes)
-                        if signal['signal'] == 'BUY':
-                            outcome = random.uniform(0.3, 0.8) * noise_factor
-                        elif signal['signal'] == 'SELL': 
-                            outcome = random.uniform(0.3, 0.8) * noise_factor
-                        else:  # HOLD
-                            outcome = random.uniform(0.4, 0.6) * noise_factor
+                        if sample_indicators:
+                            indicator_features = self.encoders['indicator'].transform(sample_indicators)
+                            features['indicator'] = indicator_features
+                    except Exception as e:
+                        logger.debug(f"Error transforming indicators for warmup sample {i}: {str(e)}")
+                    
+                    # Add other features with default values
+                    features['sentiment'] = torch.tensor([[0.0]], dtype=torch.float32)
+                    features['orderbook'] = torch.zeros((42,), dtype=torch.float32)
+                    
+                    # Generate label using improved lookahead method
+                    if i + 3 < len(ohlcv_data):
+                        current_price = ohlcv_data['close'].iloc[i]
+                        future_price = ohlcv_data['close'].iloc[i + 3]  # 3 candles ahead
                         
-                        # Train the learner
-                        self.learner.add_outcome(signal, outcome)
-                        warmup_batches += 1
-                        
-                        if warmup_batches % 10 == 0:
-                            logger.info(f"Warmup training: batch {warmup_batches}/{max_warmup_batches}")
-                
+                        if current_price > 0:
+                            price_change = (future_price - current_price) / current_price
+                            
+                            if price_change > 0.002:  # +0.2%
+                                label = 0  # BUY
+                            elif price_change < -0.002:  # -0.2%
+                                label = 1  # SELL
+                            else:
+                                label = 2  # HOLD
+                        else:
+                            label = 2  # HOLD for invalid price
+                    else:
+                        label = 2  # HOLD if not enough future data
+                    
+                    warmup_samples.append((features, label))
+                    
                 except Exception as e:
-                    logger.debug(f"Error in warmup batch {i}: {str(e)}")
+                    logger.debug(f"Error creating warmup sample {i}: {str(e)}")
                     continue
             
-            if warmup_batches > 0:
-                logger.info(f"🚀 Warmup training completed: {warmup_batches} batches processed")
+            if len(warmup_samples) < 5:
+                logger.warning("⚠️ Insufficient warmup samples created")
+                return
+            
+            # Check label diversity
+            labels = [sample[1] for sample in warmup_samples]
+            unique_labels = set(labels)
+            label_counts = {0: labels.count(0), 1: labels.count(1), 2: labels.count(2)}
+            
+            logger.info(f"Warmup labels: BUY={label_counts[0]}, SELL={label_counts[1]}, HOLD={label_counts[2]}")
+            
+            if len(unique_labels) < 2:
+                logger.warning("⚠️ Single-class labels in warmup data - model may still have stuck confidence")
+            
+            # Perform warmup training
+            warmup_results = self.learner.perform_warmup_training(warmup_samples, max_batches=30)
+            
+            if warmup_results['batches_completed'] > 0:
+                logger.info(f"🚀 Warmup training completed: {warmup_results['batches_completed']} batches processed")
+                
+                # Test prediction diversity after warmup
+                test_predictions = []
+                self.model.eval()
+                for _ in range(5):
+                    # Test with a few sample features
+                    if warmup_samples:
+                        features, _ = warmup_samples[0]
+                        with torch.no_grad():
+                            probs, confidence = self.model(features)
+                            test_predictions.append((probs, confidence))
+                
+                diversity_check = self.learner.check_prediction_diversity(test_predictions)
+                if diversity_check['diverse']:
+                    logger.info(f"✅ Prediction diversity check passed: confidence_std={diversity_check.get('confidence_std', 0):.4f}")
+                else:
+                    logger.warning(f"⚠️ Prediction diversity still low after warmup: {diversity_check.get('reason', 'unknown')}")
             else:
                 logger.warning("⚠️ No warmup batches completed - model may have stuck confidence")
                 
@@ -1071,7 +1139,7 @@ if __name__ == "__main__":
                 'n_heads': 4,
                 'dropout': 0.1,
                 'learning_rate': 1e-4,
-                'update_interval': 3600
+                'update_interval': 60  # Reduced to 60 seconds for development testing
             }
         }
     

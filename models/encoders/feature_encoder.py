@@ -102,7 +102,7 @@ class OHLCVEncoder(FeatureEncoder):
     
     def transform(self, data):
         """
-        Transform OHLCV data
+        Transform OHLCV data with auto-fitting on first use
         
         Args:
             data: DataFrame with OHLCV data
@@ -111,7 +111,7 @@ class OHLCVEncoder(FeatureEncoder):
             Tensor with encoded features
         """
         if not self.is_fitted:
-            logger.warning("OHLCV encoder not fitted, using fit_transform instead")
+            logger.info("OHLCV encoder not fitted, performing initial fit_transform")
             return self.fit_transform(data)
         
         if len(data) < self.window_size:
@@ -209,8 +209,8 @@ class IndicatorEncoder(FeatureEncoder):
         # Combine indicators into a single DataFrame
         combined = pd.DataFrame({name: series for name, series in data.items()})
         
-        # Fill NaN values with forward fill then backward fill
-        combined = combined.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        # Fill NaN values with forward fill then backward fill - fixed deprecated method
+        combined = combined.ffill().bfill().fillna(0)
         
         # Take last window_size rows
         combined = combined.iloc[-self.window_size:]
@@ -223,7 +223,7 @@ class IndicatorEncoder(FeatureEncoder):
     
     def transform(self, data):
         """
-        Transform indicator data
+        Transform indicator data with auto-fitting on first use
         
         Args:
             data: Dictionary with indicator series
@@ -232,7 +232,7 @@ class IndicatorEncoder(FeatureEncoder):
             Tensor with encoded indicators
         """
         if not self.is_fitted:
-            logger.warning("Indicator encoder not fitted, using fit_transform instead")
+            logger.info("Indicator encoder not fitted, performing initial fit_transform")
             return self.fit_transform(data)
         
         if not data or not self.available_indicators:
@@ -253,8 +253,8 @@ class IndicatorEncoder(FeatureEncoder):
         
         combined = pd.DataFrame(df_dict)
         
-        # Fill NaN values
-        combined = combined.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        # Fill NaN values - fixed deprecated method
+        combined = combined.ffill().bfill().fillna(0)
         
         # Handle case when data is shorter than window_size
         if len(combined) < self.window_size:
