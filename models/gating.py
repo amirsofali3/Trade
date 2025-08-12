@@ -240,7 +240,8 @@ class FeatureGatingModule(nn.Module):
             
             if not feature_matrix:
                 logger.warning("No features available for RFE after alignment")
-                return {}
+                # Try fallback selection instead of completely failing
+                return self._perform_fallback_selection(aligned_training_data, aligned_labels, len(aligned_labels))
             
             # Transpose to get (samples, features) shape
             X = np.column_stack(feature_matrix)

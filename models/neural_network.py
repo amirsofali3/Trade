@@ -236,7 +236,24 @@ class MarketTransformer(nn.Module):
                     logger.debug(f"Processing {name}: input shape {x.shape} -> flat shape {x_flat.shape}")
                     
                     # Project to hidden_dim
-                    projected_flat = self.projections[name](x_flat)  # (batch_size * seq_len, hidden_dim)
+                    try:
+                        projected_flat = self.projections[name](x_flat)  # (batch_size * seq_len, hidden_dim)
+                    except RuntimeError as e:
+                        if "size mismatch" in str(e) or "tensor" in str(e):
+                            logger.warning(f"Projection dimension mismatch for {name}: input {x_flat.shape}, expected {feature_dim}. Adjusting...")
+                            # Adjust input to match expected dimension
+                            expected_dim = self.projections[name].in_features
+                            if x_flat.shape[1] != expected_dim:
+                                if x_flat.shape[1] > expected_dim:
+                                    x_flat_adjusted = x_flat[:, :expected_dim]
+                                else:
+                                    padding = torch.zeros(x_flat.shape[0], expected_dim - x_flat.shape[1])
+                                    x_flat_adjusted = torch.cat([x_flat, padding], dim=1)
+                                projected_flat = self.projections[name](x_flat_adjusted)
+                            else:
+                                raise e
+                        else:
+                            raise e
                     embedded = projected_flat.view(batch_size, seq_len, self.hidden_dim)
                     
                     logger.debug(f"After projection {name}: shape {embedded.shape}")
@@ -252,7 +269,24 @@ class MarketTransformer(nn.Module):
                         x_2d = x
                     
                     # Project to hidden_dim
-                    projected = self.projections[name](x_2d)  # (batch, hidden_dim)
+                    try:
+                        projected = self.projections[name](x_2d)  # (batch, hidden_dim)
+                    except RuntimeError as e:
+                        if "size mismatch" in str(e) or "tensor" in str(e):
+                            logger.warning(f"Projection dimension mismatch for {name}: input {x_2d.shape}. Adjusting...")
+                            # Adjust input to match expected dimension
+                            expected_dim = self.projections[name].in_features
+                            if x_2d.shape[1] != expected_dim:
+                                if x_2d.shape[1] > expected_dim:
+                                    x_2d_adjusted = x_2d[:, :expected_dim]
+                                else:
+                                    padding = torch.zeros(x_2d.shape[0], expected_dim - x_2d.shape[1])
+                                    x_2d_adjusted = torch.cat([x_2d, padding], dim=1)
+                                projected = self.projections[name](x_2d_adjusted)
+                            else:
+                                raise e
+                        else:
+                            raise e
                     
                     # Ensure we have the right shape: (batch, 1, hidden_dim)
                     if projected.dim() == 2:

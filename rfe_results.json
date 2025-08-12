@@ -1,0 +1,36 @@
+{
+  "last_run": "2025-08-12T22:48:58.322574",
+  "timestamp": "2025-08-12T22:48:58.322580",
+  "method": "RandomForestRFE",
+  "ranked_features": [
+    {
+      "name": "test",
+      "rank": 1,
+      "importance": 0.1256021308441859,
+      "selected": true
+    }
+  ],
+  "selected": [
+    "test"
+  ],
+  "selected_features": {
+    "test": {
+      "rank": 1,
+      "importance": 0.1256021308441859,
+      "selected": true
+    }
+  },
+  "weights_mapping": {
+    "strong": 0,
+    "medium": 0,
+    "weak": 1
+  },
+  "n_features_selected": 1,
+  "total_features": 1,
+  "rfe_n_features_target": 15,
+  "performance_summary": {
+    "selection_criteria": "Top features based on predictive importance or variance",
+    "weak_feature_handling": "Assigned minimum weight of 0.01",
+    "strong_feature_boost": "High-impact features receive proportional weights 0.7-0.9"
+  }
+}
