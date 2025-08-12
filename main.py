@@ -324,6 +324,13 @@ class TradingBot:
             
             logger.info(f"Aligned features/labels on timestamps: {len(aligned_labels)} samples; groups={list(aligned_features.keys())}")
             
+            # Log training label distribution for clarity
+            labels_array = np.array(aligned_labels)
+            buy_count = np.sum(labels_array == 0)
+            sell_count = np.sum(labels_array == 1) 
+            hold_count = np.sum(labels_array == 2)
+            logger.info(f"Training labels: BUY={buy_count}, SELL={sell_count}, HOLD={hold_count}")
+            
             return aligned_features, aligned_labels, common_timestamps
             
         except Exception as e:
@@ -345,7 +352,7 @@ class TradingBot:
             
             lookahead = rfe_config.get('lookahead', 3)
             initial_threshold = rfe_config.get('initial_threshold', 0.002)
-            min_samples = rfe_config.get('min_samples', 30)
+            min_samples = rfe_config.get('min_samples', 300)  # Increased from 30 to ensure sufficient samples
             max_candles = self.config.get('data', {}).get('max_candles_for_rfe', 1000)
             
             # Collect training data for RFE
@@ -402,19 +409,22 @@ class TradingBot:
             indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe)
             
             if indicators_result:
-                # Convert indicators to timestamped DataFrame
-                indicator_df = pd.DataFrame()
+                # Convert indicators to timestamped DataFrame - fix fragmentation
+                indicator_data = {}
                 for name, values in indicators_result.items():
                     if isinstance(values, list) and len(values) > 0:
                         # Align indicators with OHLCV timestamps
                         if len(values) == len(ohlcv_data):
-                            indicator_df[name] = values
+                            indicator_data[name] = values
                         elif len(values) > len(ohlcv_data):
-                            indicator_df[name] = values[-len(ohlcv_data):]
+                            indicator_data[name] = values[-len(ohlcv_data):]
                         else:
                             # Pad with forward fill
                             padded = [values[0]] * (len(ohlcv_data) - len(values)) + values
-                            indicator_df[name] = padded
+                            indicator_data[name] = padded
+                
+                # Create DataFrame from dict to avoid fragmentation warning
+                indicator_df = pd.DataFrame(indicator_data) if indicator_data else pd.DataFrame()
                 
                 if not indicator_df.empty:
                     indicator_df.index = ohlcv_data['timestamp'].values
@@ -451,10 +461,16 @@ class TradingBot:
                 logger.info(f"RFE samples={len(aligned_labels)} (<{min_samples} threshold) → using fallback ranking")
                 # Use fallback method in gating module
                 fallback_results = self.gating._perform_fallback_selection(aligned_features, aligned_labels, len(aligned_labels))
-                return len(fallback_results) > 0
+                if fallback_results:
+                    logger.info(f"Fallback ranking applied: {len(fallback_results)} features ranked")
+                    return True
+                else:
+                    logger.warning("Fallback ranking failed - no features available")
+                    return False
             
             # Perform RFE with aligned data
             logger.info(f"🎯 Running RFE on {len(aligned_labels)} aligned samples...")
+            logger.info(f"RFE samples={len(aligned_labels)} (≥{min_samples} threshold) → performing full RFE")
             rfe_results = self.gating.perform_rfe_selection(aligned_features, aligned_labels)
             
             if rfe_results:
