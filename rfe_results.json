@@ -1,201 +1,117 @@
 {
-  "last_run": "2025-08-13T00:05:16.167518",
-  "timestamp": "2025-08-13T00:05:16.167524",
+  "last_run": "2025-08-13T00:07:09.565702",
+  "timestamp": "2025-08-13T00:07:09.565707",
   "method": "RandomForestRFE",
   "ranked_features": [
     {
       "name": "ohlcv.open",
       "rank": 1,
-      "importance": 0.00010341130473597422,
+      "importance": 0.0,
+      "selected": true
+    },
+    {
+      "name": "ohlcv.high",
+      "rank": 1,
+      "importance": 0.0,
       "selected": true
     },
     {
       "name": "ohlcv.low",
       "rank": 1,
-      "importance": 0.0001085209831341467,
+      "importance": 0.0,
+      "selected": true
+    },
+    {
+      "name": "ohlcv.close",
+      "rank": 1,
+      "importance": 0.0,
       "selected": true
     },
     {
       "name": "ohlcv.volume",
       "rank": 1,
-      "importance": 942369.6910124064,
+      "importance": 0.0,
       "selected": true
     },
     {
       "name": "indicator.rsi",
       "rank": 1,
-      "importance": 398.69010473433974,
+      "importance": 0.0,
       "selected": true
     },
     {
       "name": "indicator.macd",
       "rank": 1,
-      "importance": 0.010570646510980095,
+      "importance": 0.0,
       "selected": true
     },
     {
       "name": "indicator.sma",
       "rank": 1,
-      "importance": 0.00010586249623736629,
+      "importance": 0.0,
       "selected": true
-    },
-    {
-      "name": "indicator.bollinger_upper",
-      "rank": 1,
-      "importance": 0.0001102384847507025,
-      "selected": true
-    },
-    {
-      "name": "sentiment.sentiment_score",
-      "rank": 1,
-      "importance": 0.01014688252280984,
-      "selected": true
-    },
-    {
-      "name": "ohlcv.high",
-      "rank": 2,
-      "importance": 0.01,
-      "selected": false
-    },
-    {
-      "name": "ohlcv.close",
-      "rank": 2,
-      "importance": 0.01,
-      "selected": false
-    },
-    {
-      "name": "indicator.ema",
-      "rank": 2,
-      "importance": 0.01,
-      "selected": false
-    },
-    {
-      "name": "indicator.bollinger_lower",
-      "rank": 2,
-      "importance": 0.01,
-      "selected": false
-    },
-    {
-      "name": "orderbook.orderbook_0",
-      "rank": 2,
-      "importance": 0.01,
-      "selected": false
-    },
-    {
-      "name": "orderbook.orderbook_1",
-      "rank": 2,
-      "importance": 0.01,
-      "selected": false
-    },
-    {
-      "name": "orderbook.orderbook_2",
-      "rank": 2,
-      "importance": 0.01,
-      "selected": false
-    },
-    {
-      "name": "orderbook.orderbook_3",
-      "rank": 2,
-      "importance": 0.01,
-      "selected": false
-    },
-    {
-      "name": "orderbook.orderbook_4",
-      "rank": 2,
-      "importance": 0.01,
-      "selected": false
-    },
-    {
-      "name": "orderbook.orderbook_5",
-      "rank": 2,
-      "importance": 0.01,
-      "selected": false
-    },
-    {
-      "name": "orderbook.orderbook_6",
-      "rank": 2,
-      "importance": 0.01,
-      "selected": false
-    },
-    {
-      "name": "orderbook.orderbook_7",
-      "rank": 2,
-      "importance": 0.01,
-      "selected": false
-    },
-    {
-      "name": "orderbook.orderbook_8",
-      "rank": 2,
-      "importance": 0.01,
-      "selected": false
-    },
-    {
-      "name": "orderbook.orderbook_9",
-      "rank": 2,
-      "importance": 0.01,
-      "selected": false
     }
   ],
   "selected": [
     "ohlcv.open",
+    "ohlcv.high",
     "ohlcv.low",
+    "ohlcv.close",
     "ohlcv.volume",
     "indicator.rsi",
     "indicator.macd",
-    "indicator.sma",
-    "indicator.bollinger_upper",
-    "sentiment.sentiment_score"
+    "indicator.sma"
   ],
   "selected_features": {
     "ohlcv.open": {
       "rank": 1,
-      "importance": 0.00010341130473597422,
+      "importance": 0.0,
+      "selected": true
+    },
+    "ohlcv.high": {
+      "rank": 1,
+      "importance": 0.0,
       "selected": true
     },
     "ohlcv.low": {
       "rank": 1,
-      "importance": 0.0001085209831341467,
+      "importance": 0.0,
+      "selected": true
+    },
+    "ohlcv.close": {
+      "rank": 1,
+      "importance": 0.0,
       "selected": true
     },
     "ohlcv.volume": {
       "rank": 1,
-      "importance": 942369.6910124064,
+      "importance": 0.0,
       "selected": true
     },
     "indicator.rsi": {
       "rank": 1,
-      "importance": 398.69010473433974,
+      "importance": 0.0,
       "selected": true
     },
     "indicator.macd": {
       "rank": 1,
-      "importance": 0.010570646510980095,
+      "importance": 0.0,
       "selected": true
     },
     "indicator.sma": {
       "rank": 1,
-      "importance": 0.00010586249623736629,
-      "selected": true
-    },
-    "indicator.bollinger_upper": {
-      "rank": 1,
-      "importance": 0.0001102384847507025,
-      "selected": true
-    },
-    "sentiment.sentiment_score": {
-      "rank": 1,
-      "importance": 0.01014688252280984,
+      "importance": 0.0,
       "selected": true
     }
   },
   "weights_mapping": {
-    "strong": 2,
+    "strong": 0,
     "medium": 0,
-    "weak": 20
+    "weak": 8
   },
   "n_features_selected": 8,
-  "total_features": 22,
-  "rfe_n_features_target": 8,
+  "total_features": 8,
+  "rfe_n_features_target": 15,
   "performance_summary": {
     "selection_criteria": "Top features based on predictive importance or variance",
     "weak_feature_handling": "Assigned minimum weight of 0.01",
