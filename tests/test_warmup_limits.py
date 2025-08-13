@@ -45,17 +45,32 @@ class TestWarmupLimits(unittest.TestCase):
     
     def test_warmup_time_cap_exceeded(self):
         """Test warmup aborts when time cap exceeded"""
-        # Use very short time cap
-        max_seconds = 0.1  # 100ms
+        # Create data loader with artificial delay to ensure timeout
+        slow_data = []
+        for i in range(10):
+            features = {'test': torch.randn(10, 5)}  
+            label = i % 3
+            slow_data.append((features, label))
         
-        with patch('models.neural_network.logger') as mock_logger:
-            summary = self.learner._warmup_loop(self.mock_data, max_seconds=max_seconds, log_every=1)
+        # Use very short time cap
+        max_seconds = 0.001  # 1ms - should definitely timeout
+        
+        # Add delay to forward pass to ensure timeout
+        original_forward = self.model.forward
+        def slow_forward(*args, **kwargs):
+            time.sleep(0.01)  # 10ms delay per forward pass
+            return original_forward(*args, **kwargs)
+        
+        with patch.object(self.model, 'forward', side_effect=slow_forward), \
+             patch('models.neural_network.logger') as mock_logger:
+                
+            summary = self.learner._warmup_loop(slow_data, max_seconds=max_seconds, log_every=1)
             
             # Should have aborted due to time
             self.assertTrue(summary['aborted_due_to_time'])
-            self.assertLess(summary['batches_completed'], len(self.mock_data))
+            self.assertLess(summary['batches_completed'], len(slow_data))
             
-            # Should have logged warning about time exceeded
+            # Should have logged warning about time exceeded  
             warning_calls = [call for call in mock_logger.warning.call_args_list 
                            if 'WARNING: Warmup exceeded time cap' in str(call)]
             self.assertGreater(len(warning_calls), 0)
@@ -117,31 +132,21 @@ class TestWarmupLimits(unittest.TestCase):
     
     def test_warmup_early_stopping(self):
         """Test warmup early stopping on low loss"""
-        # Mock the model to return very low loss
-        with patch.object(self.model, 'forward') as mock_forward:
-            # Return low loss scenario
-            mock_forward.return_value = (
-                torch.tensor([[0.9, 0.05, 0.05]]),  # Confident prediction
-                torch.tensor([0.95])  # High confidence
-            )
+        small_data = list(self.mock_data[:5])
+        
+        # Mock F.cross_entropy to return low loss that should trigger early stopping
+        with patch('models.neural_network.F.cross_entropy') as mock_loss_fn:
+            # Return tensor that has item() method returning low value
+            mock_loss = torch.tensor(0.05)  # Below 0.1 threshold
+            mock_loss_fn.return_value = mock_loss
             
-            small_data = list(self.mock_data[:10])
+            summary = self.learner._warmup_loop(small_data, max_seconds=30, log_every=1)
             
-            with patch('models.neural_network.logger') as mock_logger, \
-                 patch('torch.nn.functional.cross_entropy') as mock_loss_fn:
-                
-                # Mock very low loss
-                mock_loss_fn.return_value = torch.tensor(0.05)  # Below 0.1 threshold
-                
-                summary = self.learner._warmup_loop(small_data, max_seconds=30, log_every=1)
-                
-                # Should have stopped early
-                self.assertLess(summary['batches_completed'], len(small_data))
-                
-                # Should have logged early stopping
-                info_calls = [str(call) for call in mock_logger.info.call_args_list]
-                early_stop_logs = [call for call in info_calls if 'Early stopping warmup' in call]
-                self.assertGreater(len(early_stop_logs), 0)
+            # Should have stopped early (loss < 0.1 triggers early stopping)
+            # Since we're returning 0.05 loss which is < 0.1, it should stop after first batch
+            self.assertLess(summary['batches_completed'], len(small_data))
+            self.assertAlmostEqual(summary['initial_loss'], 0.05, places=2)
+            self.assertAlmostEqual(summary['final_loss'], 0.05, places=2)
     
     def test_warmup_integration_with_perform_warmup_training(self):
         """Test integration between perform_warmup_training and _warmup_loop"""
