@@ -177,8 +177,16 @@ class FeatureGatingModule(nn.Module):
                     valid_cols = []
                     for col in numeric_cols:
                         col_data = numeric_data[col]
-                        if not col_data.isna().all() and col_data.var() > 1e-10:
-                            valid_cols.append(col)
+                        # Fix pandas Series boolean comparison - use proper approach
+                        try:
+                            # Use .item() to convert scalar boolean to Python bool
+                            has_valid_data = (~col_data.isna().all()).item() if hasattr((~col_data.isna().all()), "item") else bool(~col_data.isna().all())
+                            has_variance = (col_data.var() > 1e-10).item() if hasattr((col_data.var() > 1e-10), "item") else bool(col_data.var() > 1e-10)
+                            if has_valid_data and has_variance:
+                                valid_cols.append(col)
+                        except Exception as e:
+                            logger.debug(f"Error processing column {col}: {e}")
+                            continue
                     
                     if len(valid_cols) == 0:
                         logger.warning(f"No valid numeric columns in group {group_name} after filtering")
@@ -365,10 +373,12 @@ class FeatureGatingModule(nn.Module):
             # Persist RFE results to JSON file
             self._save_rfe_results_to_file()
             
-            # Calculate counts for summary
+            # Calculate counts for summary - Fix weak count logic per problem statement
             strong_count = len([f for f in self.rfe_selected_features.values() if f['selected'] and f.get('rank', 999) <= 5])
             medium_count = len([f for f in self.rfe_selected_features.values() if f['selected'] and 5 < f.get('rank', 999) <= 10])
-            weak_count = len([f for f in self.rfe_selected_features.values() if f['selected'] and f.get('rank', 999) > 10])
+            # Fix: weak_count should be total_features - (strong + medium), not just selected weak features
+            total_features = len(self.rfe_selected_features)
+            weak_count = total_features - strong_count - medium_count
             
             logger.info(f"Applied RFE weights: strong={strong_count}, medium={medium_count}, weak={weak_count}")
             logger.info(f"🚀 RFE completed! Selected {len([f for f in self.rfe_selected_features.values() if f['selected']])} features")
@@ -486,8 +496,16 @@ class FeatureGatingModule(nn.Module):
                     valid_cols = []
                     for col in numeric_cols:
                         col_data = numeric_data[col]
-                        if not col_data.isna().all() and col_data.var() > 1e-10:
-                            valid_cols.append(col)
+                        # Fix pandas Series boolean comparison - use proper approach
+                        try:
+                            # Use .item() to convert scalar boolean to Python bool
+                            has_valid_data = (~col_data.isna().all()).item() if hasattr((~col_data.isna().all()), "item") else bool(~col_data.isna().all())
+                            has_variance = (col_data.var() > 1e-10).item() if hasattr((col_data.var() > 1e-10), "item") else bool(col_data.var() > 1e-10)
+                            if has_valid_data and has_variance:
+                                valid_cols.append(col)
+                        except Exception as e:
+                            logger.debug(f"Error processing column {col}: {e}")
+                            continue
                     
                     if len(valid_cols) == 0:
                         continue
@@ -789,22 +807,9 @@ class FeatureGatingModule(nn.Module):
     
     def _log_rfe_weight_application(self, rfe_weights):
         """Log the application of RFE weights in strong/medium/weak categories"""
-        strong_count = medium_count = weak_count = 0
-        
-        for group_name, group_weights in rfe_weights.items():
-            if isinstance(group_weights, torch.Tensor):
-                weights_np = group_weights.detach().numpy() if group_weights.requires_grad else group_weights.numpy()
-                
-                # Count weight categories
-                strong = np.sum((weights_np >= 0.7) & (weights_np <= 0.9))
-                medium = np.sum((weights_np >= 0.3) & (weights_np < 0.7))
-                weak = np.sum(weights_np <= self.min_weight + 0.01)
-                
-                strong_count += strong
-                medium_count += medium
-                weak_count += weak
-        
-        logger.info(f"Applied RFE weights: strong={strong_count}, medium={medium_count}, weak={weak_count}")
+        # Remove duplicate logging - this will be handled by main.py with consistent feature-based counting
+        # to avoid the inconsistencies mentioned in the problem statement
+        pass
     
     def _save_rfe_results_to_file(self):
         """Save RFE results to external JSON file with atomic write and thread safety"""
@@ -887,6 +892,7 @@ class FeatureGatingModule(nn.Module):
             return {
                 'rfe_performed': False,
                 'total_selected': 0,
+                'total_available': 0,  # Fix: Add missing total_available field
                 'target_features': self.rfe_n_features,
                 'selection_breakdown': {},
                 'top_features': []
@@ -914,6 +920,7 @@ class FeatureGatingModule(nn.Module):
         return {
             'rfe_performed': True,
             'total_selected': len(selected_features),
+            'total_available': len(self.rfe_selected_features),  # Fix: Add missing total_available field
             'target_features': self.rfe_n_features,
             'selection_breakdown': selection_breakdown,
             'top_features': top_feature_names
@@ -1267,51 +1274,6 @@ class FeatureGatingModule(nn.Module):
                 pass
         
         return active_features
-    
-    def get_rfe_summary(self):
-        """
-        Get a summary of RFE feature selection results
-        
-        Returns:
-            Dictionary with RFE summary statistics
-        """
-        if not self.rfe_performed:
-            return {'rfe_performed': False, 'message': 'RFE not yet performed'}
-        
-        selected_features = [name for name, data in self.rfe_selected_features.items() 
-                           if data.get('selected', False)]
-        
-        # Count by category
-        trend_selected = len([f for f in selected_features if any(trend in f for trend in 
-                            ['sma', 'ema', 'macd', 'adx', 'ppo', 'psar', 'trix', 'aroon', 'cci', 'dpo', 'kst', 'ichimoku', 'tema'])])
-        momentum_selected = len([f for f in selected_features if any(mom in f for mom in 
-                               ['rsi', 'stoch', 'mfi', 'willr', 'roc', 'momentum', 'bop', 'apo', 'cmo', 'ultimate_osc', 
-                                'kama', 'fisher', 'awesome_osc', 'bias', 'tsi', 'elder_ray', 'schaff_trend', 'mass_index'])])
-        volatility_selected = len([f for f in selected_features if any(vol in f for vol in 
-                                 ['bbands', 'atr', 'keltner', 'donchian', 'volatility', 'chaikin_vol', 'std_dev', 'rvi', 
-                                  'true_range', 'avg_range', 'natr', 'pvt', 'envelope', 'price_channel'])])
-        volume_selected = len([f for f in selected_features if any(vol in f for vol in 
-                             ['obv', 'ad', 'vwap', 'cmf', 'emv', 'fi', 'nvi', 'pvi', 'vol_', 'klinger', 'mfv', 'ease_of_movement'])])
-        pattern_selected = len([f for f in selected_features if any(pat in f for pat in 
-                              ['engulfing', 'hammer', 'doji', 'shooting_star', 'hanging_man', 'morning_star', 'evening_star', 
-                               'three_', 'harami', 'piercing', 'dark_cloud', 'spinning_top', 'marubozu', 'tweezer', 
-                               'inside_bar', 'outside_bar', 'pin_bar', 'gap_', 'belt_hold'])])
-        
-        return {
-            'rfe_performed': True,
-            'total_selected': len(selected_features),
-            'target_features': self.rfe_n_features,
-            'selection_breakdown': {
-                'trend': trend_selected,
-                'momentum': momentum_selected, 
-                'volatility': volatility_selected,
-                'volume': volume_selected,
-                'pattern': pattern_selected,
-                'other': len(selected_features) - (trend_selected + momentum_selected + volatility_selected + volume_selected + pattern_selected)
-            },
-            'top_features': sorted(selected_features, 
-                                 key=lambda x: self.rfe_selected_features[x]['rank'])[:10]
-        }
     
     def get_weak_features(self):
         """
