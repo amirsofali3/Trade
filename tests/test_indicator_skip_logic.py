@@ -95,8 +95,13 @@ class TestIndicatorSkipLogic(unittest.TestCase):
         
         # Create new data with different timestamp
         new_ohlcv = self.sample_ohlcv.copy()
-        new_ohlcv['timestamp'] = pd.date_range(start='2024-01-01', periods=101, freq='5min')
-        new_ohlcv.loc[100] = [200, 201, 199, 200.5, 2000]  # Add new row
+        # Add a new row instead of changing existing timestamps
+        new_row = pd.DataFrame({
+            'timestamp': [pd.Timestamp('2024-01-01 08:20:00')],
+            'open': [200.0], 'high': [201.0], 'low': [199.0], 
+            'close': [200.5], 'volume': [2000]
+        })
+        new_ohlcv = pd.concat([new_ohlcv, new_row], ignore_index=True)
         
         self.mock_db_manager.get_ohlcv.return_value = new_ohlcv
         
