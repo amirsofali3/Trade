@@ -104,10 +104,10 @@ class FeatureGatingModule(nn.Module):
     
     def perform_rfe_selection(self, training_data, training_labels):
         """
-        Perform RFE feature selection before training starts with improved length alignment
+        Perform RFE feature selection with proper DataFrame-based feature matrix construction
         
         Args:
-            training_data: Training feature data as dict {group_name: features_array}
+            training_data: Training feature data as dict {group_name: DataFrame or features_array}
             training_labels: Training labels (0=BUY, 1=SELL, 2=HOLD)
             
         Returns:
@@ -125,137 +125,146 @@ class FeatureGatingModule(nn.Module):
         logger.info("🔍 Starting RFE feature selection process...")
         
         try:
-            # First, align all feature arrays to common length before processing
-            feature_arrays = []
-            array_lengths = []
+            # Log initial data info per group
+            total_features_per_group = {}
+            for group_name, group_data in training_data.items():
+                if hasattr(group_data, 'shape'):
+                    total_features_per_group[group_name] = group_data.shape[1] if group_data.ndim > 1 else 1
+                elif hasattr(group_data, 'columns'):
+                    total_features_per_group[group_name] = len(group_data.columns)
+                else:
+                    total_features_per_group[group_name] = 1
             
-            # Collect all arrays and their lengths
-            for group_name, features in training_data.items():
-                if isinstance(features, np.ndarray):
-                    if features.ndim >= 2:
-                        array_lengths.append(features.shape[0])
-                    else:
-                        array_lengths.append(len(features))
-                    feature_arrays.append((group_name, features))
+            logger.info(f"RFE input: Feature columns per group: {total_features_per_group}")
+            total_combined_features = sum(total_features_per_group.values())
+            logger.info(f"RFE input: Total combined features: {total_combined_features}")
             
-            # Add labels length to the calculation
-            array_lengths.append(len(training_labels))
+            # Convert aligned DataFrames to numeric feature matrix
+            feature_matrix = []
+            feature_names = []
+            samples_count = len(training_labels)
             
-            # Calculate common length - minimum of all arrays
-            if not array_lengths:
-                logger.warning("No valid feature arrays found")
-                return {}
+            for group_name, group_data in training_data.items():
+                logger.debug(f"Processing group {group_name}: type={type(group_data)}")
                 
-            common_len = min(array_lengths)
-            logger.info(f"Length alignment: arrays={array_lengths}, common_len={common_len}")
+                # Handle DataFrame format (from timestamp alignment)
+                if hasattr(group_data, 'columns') and hasattr(group_data, 'index'):
+                    # It's a DataFrame - select only numeric columns
+                    numeric_cols = group_data.select_dtypes(include=[np.number]).columns
+                    if len(numeric_cols) == 0:
+                        logger.warning(f"No numeric columns in group {group_name}")
+                        continue
+                    
+                    numeric_data = group_data[numeric_cols]
+                    
+                    # Drop columns with all NaN or zero variance
+                    valid_cols = []
+                    for col in numeric_cols:
+                        col_data = numeric_data[col]
+                        if not col_data.isna().all() and col_data.var() > 1e-10:
+                            valid_cols.append(col)
+                    
+                    if len(valid_cols) == 0:
+                        logger.warning(f"No valid numeric columns in group {group_name} after filtering")
+                        continue
+                    
+                    valid_data = numeric_data[valid_cols]
+                    
+                    # Fill NaN values
+                    valid_data = valid_data.ffill().bfill().fillna(0)
+                    
+                    # Add each column as a feature
+                    for col in valid_cols:
+                        feature_matrix.append(valid_data[col].values)
+                        feature_names.append(f"{group_name}.{col}")
+                
+                # Handle numpy array format (legacy)
+                elif isinstance(group_data, np.ndarray):
+                    if group_name == 'indicator' and group_data.ndim >= 2:
+                        # For indicator group, add each feature individually
+                        if group_data.ndim == 3:
+                            # (samples, sequence, features) -> take mean over sequence
+                            features_2d = np.mean(group_data, axis=1)
+                        else:
+                            features_2d = group_data
+                            
+                        # Add each indicator as separate feature
+                        for i in range(features_2d.shape[1]):
+                            col_data = features_2d[:, i]
+                            # Check for valid data (not all NaN, has variance)
+                            if not np.isnan(col_data).all() and np.var(col_data) > 1e-10:
+                                feature_matrix.append(col_data)
+                                feature_names.append(f"{group_name}.feature_{i}")
+                    else:
+                        # For other groups, treat as single feature or aggregate
+                        if group_data.ndim == 1:
+                            if not np.isnan(group_data).all() and np.var(group_data) > 1e-10:
+                                feature_matrix.append(group_data)
+                                feature_names.append(group_name)
+                        elif group_data.ndim == 2:
+                            # Take mean if multiple dimensions
+                            agg_data = np.mean(group_data, axis=1)
+                            if not np.isnan(agg_data).all() and np.var(agg_data) > 1e-10:
+                                feature_matrix.append(agg_data)
+                                feature_names.append(group_name)
+                        else:
+                            # Take mean over all dimensions except first
+                            reshaped = group_data.reshape(group_data.shape[0], -1)
+                            agg_data = np.mean(reshaped, axis=1)
+                            if not np.isnan(agg_data).all() and np.var(agg_data) > 1e-10:
+                                feature_matrix.append(agg_data)
+                                feature_names.append(group_name)
+                else:
+                    logger.warning(f"Unsupported data type for group {group_name}: {type(group_data)}")
+                    continue
             
-            if common_len < 5:
-                logger.warning(f"Common length {common_len} too small for RFE, need at least 5 samples")
+            # Check if we have any features
+            if not feature_matrix:
+                logger.warning("RFE aborted: 0 numeric features after cleaning")
                 return {}
             
-            # Align all arrays to common length (take last N samples)
-            aligned_training_data = {}
-            for group_name, features in feature_arrays:
-                if isinstance(features, np.ndarray):
-                    if features.ndim >= 2:
-                        aligned_training_data[group_name] = features[-common_len:]
-                    else:
-                        aligned_training_data[group_name] = features[-common_len:]
+            # Construct feature matrix X and labels y
+            X = np.column_stack(feature_matrix)
+            y = np.array(training_labels)
             
-            aligned_labels = np.array(training_labels[-common_len:])
+            # Remove samples with NaN/Inf after concatenation
+            valid_samples = ~(np.isnan(X).any(axis=1) | np.isinf(X).any(axis=1) | np.isnan(y) | np.isinf(y))
+            X_clean = X[valid_samples]
+            y_clean = y[valid_samples]
+            
+            # Log prepared input
+            logger.info(f"RFE input prepared: X shape=({X_clean.shape[0]}, {X_clean.shape[1]}), y shape=({y_clean.shape[0]})")
+            
+            if X_clean.shape[1] == 0:
+                logger.warning("RFE aborted: 0 features after cleaning")
+                return {}
+            
+            if len(X_clean) < 5:
+                logger.warning(f"RFE aborted: only {len(X_clean)} samples after cleaning, need at least 5")
+                return {}
             
             # Check label diversity to avoid single-class issues
-            unique_labels = np.unique(aligned_labels)
+            unique_labels = np.unique(y_clean)
             if len(unique_labels) < 2:
                 logger.warning(f"Single-class labels detected: {unique_labels}. Need at least 2 classes for RFE.")
                 logger.info("Attempting label regeneration with smaller thresholds...")
                 
                 # Try to regenerate labels with smaller thresholds if we have price data
-                if 'ohlcv' in training_data:
-                    aligned_labels = self._generate_diverse_labels(aligned_training_data['ohlcv'], common_len)
-                    unique_labels = np.unique(aligned_labels)
-                    logger.info(f"Regenerated labels: BUY={np.sum(aligned_labels==0)}, SELL={np.sum(aligned_labels==1)}, HOLD={np.sum(aligned_labels==2)}")
+                if 'ohlcv' in training_data and hasattr(training_data['ohlcv'], 'columns'):
+                    ohlcv_df = training_data['ohlcv']
+                    if 'close' in ohlcv_df.columns:
+                        y_clean = self._generate_diverse_labels_from_prices(ohlcv_df['close'].values[valid_samples])
+                        unique_labels = np.unique(y_clean)
+                        logger.info(f"Regenerated labels: BUY={np.sum(y_clean==0)}, SELL={np.sum(y_clean==1)}, HOLD={np.sum(y_clean==2)}")
                 
                 if len(unique_labels) < 2:
                     logger.warning("Still single-class after regeneration → using fallback variance ranking")
-                    return self._perform_fallback_selection(aligned_training_data, aligned_labels, common_len)
-            
-            # Now process with aligned data
-            feature_matrix = []
-            feature_names = []
-            
-            for group_name, features in aligned_training_data.items():
-                if group_name == 'indicator':
-                    # For indicator group, we want individual feature selection
-                    if isinstance(features, np.ndarray) and features.ndim >= 2:
-                        # Handle different shapes
-                        if features.ndim == 3:
-                            # (samples, sequence, features) -> take mean over sequence
-                            features_2d = np.mean(features, axis=1)
-                        else:
-                            features_2d = features
-                            
-                        # Add each indicator as separate feature
-                        indicator_names = [
-                            'sma', 'ema', 'rsi', 'macd', 'macd_signal', 'macd_hist',
-                            'stoch_k', 'stoch_d', 'bbands_upper', 'bbands_middle', 'bbands_lower',
-                            'adx', 'atr', 'supertrend', 'willr', 'mfi', 'obv', 'ad', 'vwap',
-                            'engulfing', 'ppo', 'psar', 'trix', 'dmi', 'aroon', 'cci', 'dpo', 
-                            'kst', 'ichimoku', 'tema', 'roc', 'momentum', 'bop', 'apo', 'cmo',
-                            'rsi_2', 'rsi_14', 'stoch_fast', 'stoch_slow', 'ultimate_osc', 
-                            'kama', 'fisher', 'awesome_osc', 'bias', 'dmi_adx', 'tsi',
-                            'elder_ray', 'schaff_trend', 'chaikin_osc', 'mass_index', 'keltner',
-                            'donchian', 'volatility', 'chaikin_vol', 'std_dev', 'rvi', 
-                            'true_range', 'avg_range', 'natr', 'pvt', 'envelope', 
-                            'price_channel', 'volatility_system', 'cmf', 'emv', 'fi', 'nvi', 
-                            'pvi', 'vol_osc', 'vol_rate', 'klinger', 'vol_sma', 'vol_ema', 
-                            'mfv', 'ad_line', 'obv_ma', 'vol_price_confirm', 'vol_weighted_macd', 
-                            'ease_of_movement', 'vol_accumulation', 'shooting_star', 'hanging_man',
-                            'morning_star', 'evening_star', 'three_white_soldiers', 
-                            'three_black_crows', 'harami', 'piercing', 'dark_cloud', 
-                            'spinning_top', 'marubozu', 'gravestone_doji', 'dragonfly_doji',
-                            'tweezer', 'inside_bar', 'outside_bar', 'pin_bar', 'gap_up',
-                            'gap_down', 'long_legged_doji', 'rickshaw_man', 'belt_hold',
-                            'hammer', 'doji'
-                        ]
-                        
-                        n_features = min(features_2d.shape[1], len(indicator_names))
-                        for i in range(n_features):
-                            feature_matrix.append(features_2d[:, i])
-                            feat_name = indicator_names[i] if i < len(indicator_names) else f"indicator_{i+1}"
-                            feature_names.append(f"{group_name}.{feat_name}")
-                else:
-                    # For other groups, treat as single feature group
-                    if isinstance(features, np.ndarray):
-                        if features.ndim == 1:
-                            feature_matrix.append(features)
-                        elif features.ndim == 2:
-                            # Take mean if multiple dimensions
-                            feature_matrix.append(np.mean(features, axis=1))
-                        else:
-                            # Take mean over all dimensions except first
-                            reshaped = features.reshape(features.shape[0], -1)
-                            feature_matrix.append(np.mean(reshaped, axis=1))
-                        feature_names.append(group_name)
-            
-            if not feature_matrix:
-                logger.warning("No features available for RFE after alignment")
-                # Try fallback selection instead of completely failing
-                return self._perform_fallback_selection(aligned_training_data, aligned_labels, len(aligned_labels))
-            
-            # Transpose to get (samples, features) shape
-            X = np.column_stack(feature_matrix)
-            y = aligned_labels
-            
-            # Remove samples with NaN/Inf
-            valid_samples = ~(np.isnan(X).any(axis=1) | np.isinf(X).any(axis=1))
-            X_clean = X[valid_samples]
-            y_clean = y[valid_samples]
+                    return self._perform_fallback_selection(training_data, y_clean, len(X_clean))
             
             if len(X_clean) < 30:
                 logger.info(f"RFE samples={len(X_clean)} (<30 threshold) → using fallback ranking")
                 # For limited data, use fallback method
-                return self._perform_fallback_selection(aligned_training_data, y_clean, len(X_clean))
+                return self._perform_fallback_selection(training_data, y_clean, len(X_clean))
             
             if len(X_clean) < 50:
                 logger.info(f"Limited samples ({len(X_clean)}) - using simplified Random Forest")
@@ -275,7 +284,7 @@ class FeatureGatingModule(nn.Module):
                     n_jobs=1
                 )
             
-            logger.info(f"RFE input: {X_clean.shape[0]} samples, {X_clean.shape[1]} features")
+            logger.info(f"Starting RFE with {X_clean.shape[0]} samples, {X_clean.shape[1]} features")
             
             # Perform RFE
             n_features_to_select = min(self.rfe_n_features, X_clean.shape[1])
@@ -300,20 +309,20 @@ class FeatureGatingModule(nn.Module):
             logger.info(f"Selected {len(selected_indices)} out of {len(feature_names)} features:")
             
             for i, (feature_name, rank) in enumerate(zip(feature_names, rankings)):
-                self.rfe_feature_rankings[feature_name] = rank
+                self.rfe_feature_rankings[feature_name] = int(rank)  # Convert to native int
                 is_selected = i in selected_indices
                 
                 if is_selected:
                     self.rfe_selected_features[feature_name] = {
-                        'rank': rank,
-                        'importance': rf_estimator.feature_importances_[i] if hasattr(rf_estimator, 'feature_importances_') else 0.0,
+                        'rank': int(rank),  # Convert to native int
+                        'importance': float(rf_estimator.feature_importances_[i]) if hasattr(rf_estimator, 'feature_importances_') else 0.0,
                         'selected': True
                     }
                     logger.info(f"  ✅ {feature_name} (rank: {rank})")
                 else:
                     # Still track unselected features but mark them
                     self.rfe_selected_features[feature_name] = {
-                        'rank': rank,
+                        'rank': int(rank),  # Convert to native int
                         'importance': 0.01,  # Low importance for unselected
                         'selected': False
                     }
@@ -340,44 +349,40 @@ class FeatureGatingModule(nn.Module):
             # Persist RFE results to JSON file
             self._save_rfe_results_to_file()
             
+            # Calculate counts for summary
+            strong_count = len([f for f in self.rfe_selected_features.values() if f['selected'] and f.get('rank', 999) <= 5])
+            medium_count = len([f for f in self.rfe_selected_features.values() if f['selected'] and 5 < f.get('rank', 999) <= 10])
+            weak_count = len([f for f in self.rfe_selected_features.values() if f['selected'] and f.get('rank', 999) > 10])
+            
+            logger.info(f"Applied RFE weights: strong={strong_count}, medium={medium_count}, weak={weak_count}")
             logger.info(f"🚀 RFE completed! Selected {len([f for f in self.rfe_selected_features.values() if f['selected']])} features")
             
             return self.rfe_selected_features
             
         except Exception as e:
             logger.error(f"Error during RFE: {str(e)}")
+            import traceback
+            logger.error(f"RFE traceback: {traceback.format_exc()}")
             return {}
     
-    def _generate_diverse_labels(self, ohlcv_data, common_len):
+    def _generate_diverse_labels_from_prices(self, close_prices):
         """
-        Generate diverse labels using lookahead and smaller thresholds to avoid single-class issue
+        Generate diverse labels from close prices using lookahead and smaller thresholds
         
         Args:
-            ohlcv_data: OHLCV data array
-            common_len: Target length for labels
+            close_prices: Array of close prices
             
         Returns:
             Array of diverse labels (0=BUY, 1=SELL, 2=HOLD)
         """
         try:
-            # Extract close prices - handle different array shapes
-            if isinstance(ohlcv_data, np.ndarray):
-                if ohlcv_data.ndim == 2:
-                    # Assume close is last column or find close column
-                    close_prices = ohlcv_data[:, -1]  # Assume close is last column
-                else:
-                    close_prices = ohlcv_data  # 1D array
-            else:
-                logger.warning("Cannot extract close prices from OHLCV data")
-                return np.full(common_len, 2)  # All HOLD
-            
             # Use lookahead approach with smaller thresholds
             look_ahead = 3  # 3 candles forward
             up_threshold = 0.002  # +0.2%
             down_threshold = -0.002  # -0.2%
             
             labels = []
-            for i in range(common_len):
+            for i in range(len(close_prices)):
                 if i + look_ahead >= len(close_prices):
                     # Not enough future data - label as HOLD
                     labels.append(2)
@@ -399,40 +404,11 @@ class FeatureGatingModule(nn.Module):
                 else:
                     labels.append(2)  # HOLD
             
-            # If still too few diverse labels, try even smaller thresholds
-            unique_labels = np.unique(labels)
-            if len(unique_labels) < 2:
-                logger.info("Reducing thresholds further to create diversity")
-                up_threshold = 0.001  # +0.1%
-                down_threshold = -0.001  # -0.1%
-                
-                labels = []
-                for i in range(common_len):
-                    if i + look_ahead >= len(close_prices):
-                        labels.append(2)
-                        continue
-                    
-                    current_price = close_prices[i]
-                    future_price = close_prices[i + look_ahead]
-                    
-                    if current_price == 0:
-                        labels.append(2)
-                        continue
-                    
-                    price_change = (future_price - current_price) / current_price
-                    
-                    if price_change > up_threshold:
-                        labels.append(0)  # BUY
-                    elif price_change < down_threshold:
-                        labels.append(1)  # SELL
-                    else:
-                        labels.append(2)  # HOLD
-            
             return np.array(labels)
             
         except Exception as e:
             logger.error(f"Error generating diverse labels: {str(e)}")
-            return np.full(common_len, 2)  # Fallback to all HOLD
+            return np.full(len(close_prices), 2)  # All HOLD as fallback
     
     def _perform_fallback_selection(self, training_data, labels, n_samples):
         """
@@ -461,36 +437,68 @@ class FeatureGatingModule(nn.Module):
             feature_matrix = []
             feature_names = []
             
-            # Rebuild feature matrix from aligned data
-            for group_name, features in training_data.items():
-                if group_name == 'indicator':
-                    if isinstance(features, np.ndarray) and features.ndim >= 2:
-                        if features.ndim == 3:
-                            features_2d = np.mean(features, axis=1)
+            # Rebuild feature matrix from aligned data - use same logic as main RFE
+            for group_name, group_data in training_data.items():
+                logger.debug(f"Fallback processing group {group_name}: type={type(group_data)}")
+                
+                # Handle DataFrame format (from timestamp alignment)
+                if hasattr(group_data, 'columns') and hasattr(group_data, 'index'):
+                    # It's a DataFrame - select only numeric columns
+                    numeric_cols = group_data.select_dtypes(include=[np.number]).columns
+                    if len(numeric_cols) == 0:
+                        continue
+                    
+                    numeric_data = group_data[numeric_cols]
+                    
+                    # Drop columns with all NaN or zero variance
+                    valid_cols = []
+                    for col in numeric_cols:
+                        col_data = numeric_data[col]
+                        if not col_data.isna().all() and col_data.var() > 1e-10:
+                            valid_cols.append(col)
+                    
+                    if len(valid_cols) == 0:
+                        continue
+                    
+                    valid_data = numeric_data[valid_cols]
+                    valid_data = valid_data.ffill().bfill().fillna(0)
+                    
+                    # Add each column as a feature
+                    for col in valid_cols:
+                        feature_matrix.append(valid_data[col].values)
+                        feature_names.append(f"{group_name}.{col}")
+                
+                # Handle numpy array format (legacy)
+                elif isinstance(group_data, np.ndarray):
+                    if group_name == 'indicator' and group_data.ndim >= 2:
+                        if group_data.ndim == 3:
+                            features_2d = np.mean(group_data, axis=1)
                         else:
-                            features_2d = features
+                            features_2d = group_data
                         
-                        indicator_names = [
-                            'sma', 'ema', 'rsi', 'macd', 'macd_signal', 'macd_hist',
-                            'stoch_k', 'stoch_d', 'bbands_upper', 'bbands_middle', 'bbands_lower',
-                            'adx', 'atr', 'supertrend', 'willr', 'mfi', 'obv', 'ad', 'vwap', 'engulfing'
-                        ]
-                        
-                        n_features = min(features_2d.shape[1], len(indicator_names))
-                        for i in range(n_features):
-                            feature_matrix.append(features_2d[:, i])
-                            feat_name = indicator_names[i] if i < len(indicator_names) else f"indicator_{i+1}"
-                            feature_names.append(f"{group_name}.{feat_name}")
-                else:
-                    if isinstance(features, np.ndarray):
-                        if features.ndim == 1:
-                            feature_matrix.append(features)
-                        elif features.ndim == 2:
-                            feature_matrix.append(np.mean(features, axis=1))
+                        # Add each indicator as separate feature
+                        for i in range(features_2d.shape[1]):
+                            col_data = features_2d[:, i]
+                            if not np.isnan(col_data).all() and np.var(col_data) > 1e-10:
+                                feature_matrix.append(col_data)
+                                feature_names.append(f"{group_name}.feature_{i}")
+                    else:
+                        # For other groups, treat as single feature or aggregate
+                        if group_data.ndim == 1:
+                            if not np.isnan(group_data).all() and np.var(group_data) > 1e-10:
+                                feature_matrix.append(group_data)
+                                feature_names.append(group_name)
+                        elif group_data.ndim == 2:
+                            agg_data = np.mean(group_data, axis=1)
+                            if not np.isnan(agg_data).all() and np.var(agg_data) > 1e-10:
+                                feature_matrix.append(agg_data)
+                                feature_names.append(group_name)
                         else:
-                            reshaped = features.reshape(features.shape[0], -1)
-                            feature_matrix.append(np.mean(reshaped, axis=1))
-                        feature_names.append(group_name)
+                            reshaped = group_data.reshape(group_data.shape[0], -1)
+                            agg_data = np.mean(reshaped, axis=1)
+                            if not np.isnan(agg_data).all() and np.var(agg_data) > 1e-10:
+                                feature_matrix.append(agg_data)
+                                feature_names.append(group_name)
             
             if not feature_matrix:
                 logger.warning("No features for fallback selection")
@@ -756,9 +764,9 @@ class FeatureGatingModule(nn.Module):
                 for name, info in self.rfe_selected_features.items():
                     ranked_features.append({
                         'name': name,
-                        'rank': info['rank'],
-                        'importance': info['importance'],
-                        'selected': info['selected']
+                        'rank': int(info['rank']),  # Convert to native int
+                        'importance': float(info['importance']),  # Convert to native float
+                        'selected': bool(info['selected'])  # Convert to native bool
                     })
                 
                 # Sort by rank (lower is better)
@@ -1269,3 +1277,53 @@ class FeatureGatingModule(nn.Module):
                             weak_features.append(f"{group_name}.{feature_name}")
         
         return weak_features
+    
+    def get_scalar_weight(self, group_name):
+        """
+        Get scalar weight for a feature group to apply after projection
+        
+        Args:
+            group_name: Name of the feature group
+            
+        Returns:
+            Scalar weight to multiply the projected features
+        """
+        if not self.rfe_performed:
+            # No RFE performed, return neutral weight
+            return 1.0
+        
+        # Get all selected features categorized
+        all_selected = [(name, info) for name, info in self.rfe_selected_features.items() if info['selected']]
+        all_selected.sort(key=lambda x: x[1]['importance'], reverse=True)
+        
+        n_selected = len(all_selected)
+        strong_count = min(self.rfe_n_features, n_selected)
+        medium_count = min(strong_count * 2, n_selected - strong_count)
+        
+        strong_features = set(item[0] for item in all_selected[:strong_count])
+        medium_features = set(item[0] for item in all_selected[strong_count:strong_count + medium_count])
+        
+        if group_name == 'indicator':
+            # For indicators, average the weights of selected features in this group
+            indicator_weights = []
+            for name, info in self.rfe_selected_features.items():
+                if name.startswith('indicator.') and info['selected']:
+                    if name in strong_features:
+                        indicator_weights.append(0.8)  # Strong weight
+                    elif name in medium_features:
+                        indicator_weights.append(0.5)  # Medium weight
+                    else:
+                        indicator_weights.append(float(self.min_weight))
+            
+            if indicator_weights:
+                return float(np.mean(indicator_weights))
+            else:
+                return float(self.min_weight)
+        else:
+            # For other groups, use direct category mapping
+            if group_name in strong_features:
+                return 0.8  # Strong weight
+            elif group_name in medium_features:
+                return 0.5  # Medium weight
+            else:
+                return float(self.min_weight)  # Weak weight
