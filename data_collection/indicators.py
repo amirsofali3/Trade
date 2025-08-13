@@ -402,15 +402,19 @@ class IndicatorCalculator:
     
     def _should_skip_computation(self, symbol, timeframe, current_timestamp):
         """
-        Check if indicator computation should be skipped based on timestamp.
+        Check if indicator computation should be skipped based on timestamp comparison.
+        
+        Implements incremental computation optimization by comparing the current latest
+        timestamp with the previously computed timestamp. If timestamps match, it indicates
+        no new data is available and computation can be safely skipped.
         
         Args:
-            symbol: Trading symbol
-            timeframe: Timeframe
-            current_timestamp: Current latest timestamp
+            symbol: Trading symbol (e.g. 'BTCUSDT')
+            timeframe: Timeframe string (e.g. '5m', '1h')
+            current_timestamp: Current latest timestamp from OHLCV data
             
         Returns:
-            bool: True if computation should be skipped
+            bool: True if computation should be skipped (no new data), False otherwise
         """
         if not current_timestamp:
             return False

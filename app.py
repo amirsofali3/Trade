@@ -611,6 +611,29 @@ def warmup_status():
         logger.error(f"Error in /api/warmup-status: {str(e)}")
         return jsonify({'error': 'Failed to retrieve warmup status'}), 500
 
+@app.route('/api/rolling-performance')
+def rolling_performance():
+    """Return rolling performance metrics (Phase 2)"""
+    try:
+        performance_data = {
+            'win_rate_last_20': 0.0,
+            'avg_rr_last_20': 0.0, 
+            'cumulative_pnl': 0.0,
+            'total_trades': 0,
+            'trades_last_20': 0,
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        if bot_instance and hasattr(bot_instance, '_calculate_rolling_performance_metrics'):
+            metrics = bot_instance._calculate_rolling_performance_metrics()
+            performance_data.update(metrics)
+        
+        return jsonify(performance_data)
+        
+    except Exception as e:
+        logger.error(f"Error in /api/rolling-performance: {str(e)}")
+        return jsonify({'error': 'Failed to retrieve performance metrics'}), 500
+
 @app.route('/api/feature-selection')
 def feature_selection():
     """Return detailed RFE feature selection results with all required fields"""

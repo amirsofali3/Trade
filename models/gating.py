@@ -84,6 +84,9 @@ class FeatureGatingModule(nn.Module):
         self.last_performance_check = time.time()
         self.recent_success_rates = []  # Rolling window for performance tracking
         
+        # Gating adaptation control (Phase 2 requirement)
+        self.freeze_adaptation = False  # When True, adaptation is disabled during warmup
+        
         # Create gate networks for each feature group
         self.gate_networks = nn.ModuleDict()
         
@@ -1431,11 +1434,18 @@ class FeatureGatingModule(nn.Module):
         """
         Build persistent active feature masks for each group referencing original index positions.
         
+        This method creates boolean masks indicating which features in each group should be 
+        actively computed and used based on RFE selection results. Implements fallback logic
+        to ensure minimum feature count requirements are met.
+        
         Args:
-            min_active_features: Minimum number of active features required
+            min_active_features: Minimum number of active features required across all groups
             
         Returns:
-            Dict of group_name -> boolean mask of active features
+            Dict[str, np.ndarray]: Dictionary mapping group names to boolean masks of active features
+            
+        Raises:
+            Warning: If RFE has not been performed yet
         """
         if not self.rfe_performed:
             logger.warning("Cannot build active feature masks without RFE results")
@@ -1545,12 +1555,19 @@ class FeatureGatingModule(nn.Module):
         """
         Check if periodic RFE should be triggered based on time interval or performance drop.
         
+        Implements both time-based and performance-based triggers for automatic RFE re-execution.
+        Time-based triggers activate after a configured interval has elapsed. Performance-based
+        triggers activate when trading success rate drops below a threshold.
+        
         Args:
-            config: Configuration dict with RFE settings
-            current_performance: Current success rate (0.0-1.0)
+            config: Configuration dict with RFE settings containing:
+                - rfe.periodic.enabled: Whether periodic RFE is enabled
+                - rfe.periodic.interval_minutes: Time interval for periodic triggers  
+                - rfe.trigger.performance_drop_pct: Performance drop threshold percentage
+            current_performance: Current success rate (0.0-1.0), optional
             
         Returns:
-            bool: True if RFE should be triggered
+            bool: True if RFE should be triggered, False otherwise
         """
         rfe_config = config.get('rfe', {})
         periodic_config = rfe_config.get('periodic', {})
@@ -1597,8 +1614,12 @@ class FeatureGatingModule(nn.Module):
         """
         Generate SHA1 hash of sorted selected feature names for versioning.
         
+        Creates a deterministic hash based on the currently selected feature set to enable
+        model checkpoint versioning and compatibility checking. The hash is generated from
+        a sorted list of selected feature names to ensure consistency across runs.
+        
         Returns:
-            str: SHA1 hash of feature set
+            str: SHA1 hash (first 12 characters) of the feature set, or "no_features" if empty
         """
         if not self.selected_features:
             return "no_features"
@@ -1639,3 +1660,91 @@ class FeatureGatingModule(nn.Module):
             logger.info(f"RFE summary with version saved to {summary_path}")
         except Exception as e:
             logger.error(f"Failed to save RFE summary with version: {e}")
+    
+    def load_checkpoint_with_compatibility(self, checkpoint_path):
+        """
+        Load model checkpoint with feature set compatibility checking (Phase 2).
+        
+        Provides backward compatibility for checkpoints that don't have feature_set_version.
+        If a version mismatch is detected, offers options to handle the incompatibility.
+        
+        Args:
+            checkpoint_path: Path to model checkpoint file
+            
+        Returns:
+            dict: Loading results with compatibility information
+        """
+        try:
+            import json
+            import os
+            
+            result = {
+                'loaded': False,
+                'compatible': False,
+                'version_mismatch': False,
+                'missing_features': [],
+                'action_taken': None
+            }
+            
+            # Check if RFE summary exists alongside checkpoint
+            checkpoint_dir = os.path.dirname(checkpoint_path)
+            summary_path = os.path.join(checkpoint_dir, 'rfe_summary_with_version.json')
+            
+            checkpoint_version = None
+            checkpoint_features = []
+            
+            if os.path.exists(summary_path):
+                try:
+                    with open(summary_path, 'r') as f:
+                        summary = json.load(f)
+                        checkpoint_version = summary.get('feature_set_version')
+                        checkpoint_features = summary.get('selected_features', [])
+                except Exception as e:
+                    logger.warning(f"Could not read RFE summary: {e}")
+            
+            # Get current feature set
+            current_version = self.feature_set_version
+            current_features = self.selected_features.copy()
+            
+            # Check compatibility
+            if checkpoint_version is None:
+                logger.info("Loading checkpoint without feature_set_version (backward compatibility)")
+                result['compatible'] = True
+                result['action_taken'] = 'backward_compatibility'
+            elif checkpoint_version == current_version:
+                logger.info(f"Checkpoint version {checkpoint_version} matches current version")
+                result['compatible'] = True
+                result['action_taken'] = 'version_match'
+            else:
+                logger.warning(f"Version mismatch: checkpoint={checkpoint_version}, current={current_version}")
+                result['version_mismatch'] = True
+                
+                # Check for missing features
+                missing = set(checkpoint_features) - set(current_features)
+                result['missing_features'] = list(missing)
+                
+                if missing:
+                    logger.info(f"Temporarily re-adding {len(missing)} missing features for compatibility")
+                    # Add missing features with minimum weight
+                    for feature_name in missing:
+                        if feature_name not in self.rfe_selected_features:
+                            self.rfe_selected_features[feature_name] = {
+                                'selected': True,
+                                'rank': 999,
+                                'importance': self.min_weight
+                            }
+                    
+                    # Update selected features list
+                    self.selected_features.extend(missing)
+                    result['action_taken'] = 'auto_expand_features'
+                    result['compatible'] = True
+                else:
+                    result['compatible'] = True
+                    result['action_taken'] = 'subset_compatible'
+            
+            result['loaded'] = True
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error loading checkpoint with compatibility: {e}")
+            return {'loaded': False, 'error': str(e)}

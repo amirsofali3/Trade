@@ -56,7 +56,9 @@ class TestActiveFeatureMask(unittest.TestCase):
         
         # Check mask lengths match feature group sizes
         self.assertEqual(len(masks['ohlcv']), self.feature_groups['ohlcv'])
-        self.assertEqual(len(masks['indicator']), self.feature_groups['indicator'])
+        # For indicators, the mask length should match the available indicators count  
+        available_indicators = len(self.gating._get_indicator_names())
+        self.assertEqual(len(masks['indicator']), available_indicators)
         self.assertEqual(len(masks['sentiment']), self.feature_groups['sentiment'])
         self.assertEqual(len(masks['orderbook']), self.feature_groups['orderbook'])
     
@@ -150,10 +152,12 @@ class TestActiveFeatureMask(unittest.TestCase):
         self.gating.rfe_performed = True
         self.gating.rfe_selected_features = {}
         
-        # Create mock selected indicators (first 10 out of 20)
-        indicator_names = self.gating._get_indicator_names()[:20]
+        # Get actual indicator names and create mock selected indicators
+        indicator_names = self.gating._get_indicator_names()
+        num_to_select = min(10, len(indicator_names))
+        
         for i, name in enumerate(indicator_names):
-            selected = i < 10  # First 10 selected
+            selected = i < num_to_select  # First 10 selected
             self.gating.rfe_selected_features[f'indicator.{name}'] = {
                 'selected': selected,
                 'rank': i + 1
@@ -178,9 +182,11 @@ class TestActiveFeatureMask(unittest.TestCase):
         self.gating.rfe_selected_features = {}
         
         # Only select 2 indicators
-        indicator_names = self.gating._get_indicator_names()[:20]
+        indicator_names = self.gating._get_indicator_names()
+        num_to_select = min(2, len(indicator_names))
+        
         for i, name in enumerate(indicator_names):
-            selected = i < 2  # Only first 2 selected
+            selected = i < num_to_select  # Only first 2 selected
             self.gating.rfe_selected_features[f'indicator.{name}'] = {
                 'selected': selected,
                 'rank': i + 1
