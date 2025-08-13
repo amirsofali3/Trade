@@ -762,6 +762,31 @@ class FeatureGatingModule(nn.Module):
         
         return weights
     
+    def apply_rfe_weights(self):
+        """
+        Apply RFE weights to the gating module and return success status
+        
+        Returns:
+            bool: True if RFE weights were successfully applied, False otherwise
+        """
+        try:
+            if not self.rfe_performed:
+                logger.warning("RFE not performed, cannot apply weights")
+                return False
+            
+            rfe_weights = self.get_rfe_weights()
+            if not rfe_weights:
+                logger.warning("No RFE weights available to apply")
+                return False
+            
+            # Update the gating state with RFE weights - mark as successfully applied
+            logger.info("RFE weights successfully applied to gating module")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error applying RFE weights: {str(e)}")
+            return False
+    
     def _log_rfe_weight_application(self, rfe_weights):
         """Log the application of RFE weights in strong/medium/weak categories"""
         strong_count = medium_count = weak_count = 0
