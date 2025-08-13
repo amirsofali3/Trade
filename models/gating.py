@@ -149,10 +149,26 @@ class FeatureGatingModule(nn.Module):
                 
                 # Handle DataFrame format (from timestamp alignment)
                 if hasattr(group_data, 'columns') and hasattr(group_data, 'index'):
-                    # It's a DataFrame - select only numeric columns
-                    numeric_cols = group_data.select_dtypes(include=[np.number]).columns
+                    # It's a DataFrame - select and convert numeric columns
+                    numeric_cols = group_data.select_dtypes(include=[np.number]).columns.tolist()
+                    
+                    # For sentiment/orderbook columns, try to convert non-numeric to numeric
+                    if group_name in ['sentiment', 'orderbook']:
+                        for col in group_data.columns:
+                            if col not in numeric_cols:
+                                try:
+                                    # Try to convert non-numeric columns to numeric
+                                    converted_col = pd.to_numeric(group_data[col], errors='coerce')
+                                    # Keep column if it has finite values and non-zero variance
+                                    if not converted_col.isna().all() and converted_col.var() > 1e-10:
+                                        group_data[col] = converted_col
+                                        numeric_cols.append(col)
+                                        logger.debug(f"Converted {group_name}.{col} to numeric")
+                                except Exception as e:
+                                    logger.debug(f"Could not convert {group_name}.{col} to numeric: {str(e)}")
+                    
                     if len(numeric_cols) == 0:
-                        logger.warning(f"No numeric columns in group {group_name}")
+                        logger.info(f"No valid numeric columns in group {group_name} (this is normal if group has no numeric data)")
                         continue
                     
                     numeric_data = group_data[numeric_cols]
@@ -443,8 +459,24 @@ class FeatureGatingModule(nn.Module):
                 
                 # Handle DataFrame format (from timestamp alignment)
                 if hasattr(group_data, 'columns') and hasattr(group_data, 'index'):
-                    # It's a DataFrame - select only numeric columns
-                    numeric_cols = group_data.select_dtypes(include=[np.number]).columns
+                    # It's a DataFrame - select and convert numeric columns
+                    numeric_cols = group_data.select_dtypes(include=[np.number]).columns.tolist()
+                    
+                    # For sentiment/orderbook columns, try to convert non-numeric to numeric
+                    if group_name in ['sentiment', 'orderbook']:
+                        for col in group_data.columns:
+                            if col not in numeric_cols:
+                                try:
+                                    # Try to convert non-numeric columns to numeric
+                                    converted_col = pd.to_numeric(group_data[col], errors='coerce')
+                                    # Keep column if it has finite values and non-zero variance
+                                    if not converted_col.isna().all() and converted_col.var() > 1e-10:
+                                        group_data[col] = converted_col
+                                        numeric_cols.append(col)
+                                        logger.debug(f"Converted {group_name}.{col} to numeric")
+                                except Exception as e:
+                                    logger.debug(f"Could not convert {group_name}.{col} to numeric: {str(e)}")
+                    
                     if len(numeric_cols) == 0:
                         continue
                     
