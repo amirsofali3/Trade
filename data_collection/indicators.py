@@ -1,6 +1,7 @@
 import logging
 import pandas as pd
 import numpy as np
+import time
 from database.db_manager import DatabaseManager
 
 logger = logging.getLogger("IndicatorCalculator")
@@ -16,6 +17,9 @@ class IndicatorCalculator:
             db_manager: Database manager instance
         """
         self.db_manager = db_manager
+        
+        # Profiling attributes for indicator timing
+        self.last_indicator_profile = {}  # Store last profiling results
         
         # Define available indicators - Extended to ~100 technical indicators
         self.available_indicators = {
@@ -245,15 +249,16 @@ class IndicatorCalculator:
         
         logger.info("Indicator calculator initialized")
     
-    def calculate_indicators(self, symbol, timeframe, indicators=None, params=None):
+    def calculate_indicators(self, symbol, timeframe, indicators=None, params=None, profile=True):
         """
-        Calculate specified indicators and save to database
+        Calculate specified indicators and save to database with optional profiling.
         
         Args:
             symbol: Trading pair symbol
             timeframe: Timeframe (e.g. '1m', '5m', '1h')
             indicators: List of indicators to calculate or None for all
             params: Dictionary of parameter overrides for indicators
+            profile: Whether to profile indicator computation times (default True)
             
         Returns:
             Dictionary with calculated indicators
@@ -279,6 +284,8 @@ class IndicatorCalculator:
                 combined_params = self.default_params
             
             results = {}
+            indicator_times = []  # Track per-indicator timing
+            profile_start = time.time()
             
             for ind in indicators:
                 if ind not in self.available_indicators:
@@ -286,11 +293,18 @@ class IndicatorCalculator:
                     continue
                 
                 try:
+                    # Time individual indicator computation
+                    ind_start = time.time()
+                    
                     # Calculate indicator
                     calculator = self.available_indicators[ind]
                     ind_params = combined_params.get(ind, {})
                     
                     ind_result = calculator(ohlcv_data, **ind_params)
+                    
+                    # Record timing
+                    ind_elapsed = time.time() - ind_start
+                    indicator_times.append((ind, ind_elapsed))
                     
                     if not isinstance(ind_result, dict):
                         ind_result = {ind: ind_result}
@@ -306,11 +320,43 @@ class IndicatorCalculator:
                 except Exception as e:
                     logger.error(f"Error calculating indicator {ind}: {str(e)}")
             
+            # Profile logging and storage
+            if profile and indicator_times:
+                self._log_indicator_profile(indicator_times, profile_start)
+            
             return results
         
         except Exception as e:
             logger.error(f"Error in calculate_indicators: {str(e)}")
             return {}
+    
+    def _log_indicator_profile(self, indicator_times, start_time):
+        """
+        Log indicator profiling results and store for diagnostics.
+        
+        Args:
+            indicator_times: List of (indicator_name, elapsed_seconds) tuples
+            start_time: Start time of profiling
+        """
+        total_time = time.time() - start_time
+        total_indicators = len(indicator_times)
+        avg_time = total_time / total_indicators if total_indicators > 0 else 0
+        
+        # Sort by elapsed time descending to get slowest
+        slowest_indicators = sorted(indicator_times, key=lambda x: x[1], reverse=True)
+        slowest_n = slowest_indicators[:5]  # Top 5 slowest
+        
+        # Store last profile for diagnostics
+        self.last_indicator_profile = {
+            'total': total_indicators,
+            'total_time': total_time,
+            'avg_time': avg_time,
+            'slowest': slowest_n
+        }
+        
+        # Log profile with deterministic ordering
+        slowest_str = ', '.join([f"('{name}', {time:.3f})" for name, time in slowest_n])
+        logger.info(f"Indicator profile: total={total_indicators} total_time={total_time:.3f}s avg_time={avg_time:.4f}s slowest=[{slowest_str}]")
     
     # Indicator calculation methods
     def _calculate_sma(self, ohlcv, timeperiod=20):

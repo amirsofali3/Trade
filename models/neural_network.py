@@ -454,13 +454,111 @@ class OnlineLearner:
         logger.info(f"Initialized Enhanced OnlineLearner with feedback learning")
         logger.info(f"Buffer size: {buffer_size}, Batch size: {batch_size}, Update interval: {update_interval}s")
     
-    def perform_warmup_training(self, warmup_data, max_batches=30):
+    def _warmup_loop(self, dataloader, max_seconds=120, log_every=10):
+        """
+        Enhanced warmup loop with progress logging and time cap enforcement.
+        
+        Args:
+            dataloader: Iterator/list of training samples
+            max_seconds: Maximum time allowed for warmup (default 120)
+            log_every: Log progress every N batches (default 10)
+            
+        Returns:
+            Dictionary with warmup summary
+        """
+        start_time = time.time()
+        initial_loss = None
+        final_loss = None
+        batches_completed = 0
+        aborted_due_to_time = False
+        
+        # Set model to training mode
+        self.model.train()
+        
+        total_batches = len(dataloader) if hasattr(dataloader, '__len__') else 'unknown'
+        logger.info(f"🔥 Starting warmup loop: {total_batches} batches, max_time={max_seconds}s")
+        
+        try:
+            for batch_idx, (features_dict, label) in enumerate(dataloader):
+                # Check time cap
+                elapsed = time.time() - start_time
+                if elapsed > max_seconds:
+                    logger.warning(f"WARNING: Warmup exceeded time cap ({max_seconds}s), aborting at batch {batch_idx}")
+                    aborted_due_to_time = True
+                    break
+                
+                try:
+                    # Forward pass
+                    self.optimizer.zero_grad()
+                    logits, confidences = self.model([features_dict])
+                    
+                    # Calculate loss
+                    loss = F.cross_entropy(logits, torch.tensor([label], dtype=torch.long))
+                    
+                    if batch_idx == 0:
+                        initial_loss = loss.item()
+                    final_loss = loss.item()
+                    
+                    # Backward pass
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                    self.optimizer.step()
+                    
+                    batches_completed += 1
+                    
+                    # Progress logging
+                    if (batch_idx + 1) % log_every == 0 or batch_idx == 0:
+                        avg_confidence = torch.mean(confidences).item()
+                        logger.info(f"Warmup progress: batch {batch_idx+1}/{total_batches} loss={loss.item():.4f} elapsed={elapsed:.1f}s")
+                    
+                    # Early stopping if loss becomes very low
+                    if loss.item() < 0.1:
+                        logger.info(f"Early stopping warmup at batch {batch_idx + 1} due to low loss")
+                        break
+                        
+                except Exception as e:
+                    logger.error(f"Error in warmup batch {batch_idx}: {str(e)}")
+                    continue
+        
+        except Exception as e:
+            logger.error(f"Error during warmup loop: {str(e)}")
+        
+        finally:
+            # Set model back to eval mode
+            self.model.eval()
+            
+            # Calculate summary
+            elapsed_total = time.time() - start_time
+            avg_loss = (initial_loss + final_loss) / 2 if initial_loss and final_loss else None
+            loss_start = initial_loss or 0.0
+            loss_end = final_loss or 0.0
+            
+            # Final summary log
+            logger.info(f"Warmup complete: batches={batches_completed} duration={elapsed_total:.1f}s loss_start={loss_start:.4f} loss_end={loss_end:.4f} avg={avg_loss:.4f if avg_loss else 0:.4f}")
+            
+            # Store summary for diagnostics (optional)
+            warmup_summary = {
+                'batches_completed': batches_completed,
+                'duration_seconds': elapsed_total,
+                'initial_loss': initial_loss,
+                'final_loss': final_loss,
+                'average_loss': avg_loss,
+                'aborted_due_to_time': aborted_due_to_time
+            }
+            
+            # Store as attribute for potential diagnostics exposure
+            self.last_warmup_summary = warmup_summary
+            
+            return warmup_summary
+    
+    def perform_warmup_training(self, warmup_data, max_batches=30, max_seconds=120):
         """
         Perform warmup training to initialize model weights and avoid stuck confidence
         
         Args:
             warmup_data: List of training samples [(features_dict, label), ...]
             max_batches: Maximum number of warmup batches to run
+            max_seconds: Maximum time allowed for warmup (default 120)
             
         Returns:
             Dictionary with warmup training results
@@ -472,13 +570,6 @@ class OnlineLearner:
             return {'batches_completed': 0, 'final_loss': None}
         
         try:
-            initial_loss = None
-            final_loss = None
-            batches_completed = 0
-            
-            # Set model to training mode
-            self.model.train()
-            
             # Adjust learning rate for warmup (typically higher)
             original_lr = self.optimizer.param_groups[0]['lr']
             warmup_lr = original_lr * 2.0  # Double the learning rate for warmup
@@ -488,95 +579,27 @@ class OnlineLearner:
             
             logger.info(f"Warmup learning rate: {warmup_lr} (original: {original_lr})")
             
-            for batch_idx in range(max_batches):
-                try:
-                    # Sample random batch from warmup data
-                    batch_size = min(self.batch_size, len(warmup_data))
-                    batch_indices = np.random.choice(len(warmup_data), size=batch_size, replace=False)
-                    batch_samples = [warmup_data[i] for i in batch_indices]
-                    
-                    # Prepare batch
-                    batch_features = {}
-                    batch_labels = []
-                    
-                    for features_dict, label in batch_samples:
-                        # Collect features
-                        for name, tensor in features_dict.items():
-                            if name not in batch_features:
-                                batch_features[name] = []
-                            
-                            # Ensure tensor is on correct device and has right shape
-                            if isinstance(tensor, torch.Tensor):
-                                batch_features[name].append(tensor.detach())
-                            else:
-                                batch_features[name].append(torch.tensor(tensor))
-                        
-                        batch_labels.append(label)
-                    
-                    # Stack tensors
-                    stacked_features = {}
-                    for name in batch_features:
-                        try:
-                            stacked_features[name] = torch.stack(batch_features[name])
-                        except Exception as e:
-                            logger.warning(f"Could not stack {name} tensors: {str(e)}")
-                            # Use first tensor with proper batch dimension
-                            stacked_features[name] = batch_features[name][0].unsqueeze(0)
-                    
-                    batch_labels_tensor = torch.tensor(batch_labels, dtype=torch.long)
-                    
-                    # Forward pass
-                    self.optimizer.zero_grad()
-                    logits, confidences = self.model(stacked_features)
-                    
-                    # Calculate loss
-                    loss = F.cross_entropy(logits, batch_labels_tensor)
-                    
-                    if batch_idx == 0:
-                        initial_loss = loss.item()
-                    final_loss = loss.item()
-                    
-                    # Backward pass
-                    loss.backward()
-                    
-                    # Clip gradients
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-                    
-                    # Update weights
-                    self.optimizer.step()
-                    
-                    batches_completed += 1
-                    
-                    # Log progress every 10 batches
-                    if (batch_idx + 1) % 10 == 0:
-                        avg_confidence = torch.mean(confidences).item()
-                        logger.info(f"Warmup batch {batch_idx + 1}/{max_batches}: loss={loss.item():.4f}, avg_confidence={avg_confidence:.4f}")
-                    
-                    # Early stopping if loss becomes very low
-                    if loss.item() < 0.1:
-                        logger.info(f"Early stopping warmup at batch {batch_idx + 1} due to low loss")
-                        break
-                        
-                except Exception as e:
-                    logger.error(f"Error in warmup batch {batch_idx}: {str(e)}")
-                    continue
+            # Use the new enhanced warmup loop
+            warmup_summary = self._warmup_loop(warmup_data[:max_batches], max_seconds=max_seconds, log_every=10)
             
             # Restore original learning rate
             for param_group in self.optimizer.param_groups:
                 param_group['lr'] = original_lr
             
-            # Set model back to eval mode
-            self.model.eval()
-            
+            # Convert to expected format for backward compatibility
             warmup_results = {
-                'batches_completed': batches_completed,
-                'initial_loss': initial_loss,
-                'final_loss': final_loss,
-                'loss_improvement': (initial_loss - final_loss) if initial_loss and final_loss else 0
+                'batches_completed': warmup_summary['batches_completed'],
+                'initial_loss': warmup_summary['initial_loss'],
+                'final_loss': warmup_summary['final_loss'],
+                'loss_improvement': (warmup_summary['initial_loss'] - warmup_summary['final_loss']) if warmup_summary['initial_loss'] and warmup_summary['final_loss'] else 0,
+                'duration_seconds': warmup_summary['duration_seconds'],
+                'aborted_due_to_time': warmup_summary['aborted_due_to_time']
             }
             
-            if batches_completed > 0:
-                logger.info(f"🚀 Warmup training completed: {batches_completed} batches, loss: {initial_loss:.4f} → {final_loss:.4f}")
+            if warmup_results['batches_completed'] > 0:
+                loss_start = warmup_summary['initial_loss'] or 0
+                loss_end = warmup_summary['final_loss'] or 0
+                logger.info(f"🚀 Warmup training completed: {warmup_results['batches_completed']} batches, loss: {loss_start:.4f} → {loss_end:.4f}")
             else:
                 logger.warning("⚠️ No warmup batches completed - model may have stuck confidence")
             

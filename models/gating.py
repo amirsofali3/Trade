@@ -64,6 +64,13 @@ class FeatureGatingModule(nn.Module):
         self.rfe_performed = False
         self.rfe_model = None
         
+        # New unified RFE state attributes per requirements
+        self.rfe_all_features = []  # List of cleaned feature names before selection
+        self.selected_features = []  # List of selected feature names
+        self.feature_categories = {}  # Dict: feature_name -> {selected, rank, category}
+        self.rfe_counts = {'strong': 0, 'medium': 0, 'weak': 0}  # Category counts
+        self.total_raw_features = 0  # Optional: raw count if differs from cleaned
+        
         # Create gate networks for each feature group
         self.gate_networks = nn.ModuleDict()
         
@@ -370,18 +377,16 @@ class FeatureGatingModule(nn.Module):
             self.rfe_performed = True
             self.rfe_model = rfe
             
+            # Populate new unified RFE state attributes
+            self.rfe_all_features = feature_names.copy()  # Cleaned feature names before selection
+            self.selected_features = [name for name, info in self.rfe_selected_features.items() if info['selected']]
+            self._build_feature_categories()
+            
             # Persist RFE results to JSON file
             self._save_rfe_results_to_file()
             
-            # Calculate counts for summary - Fix weak count logic per problem statement
-            strong_count = len([f for f in self.rfe_selected_features.values() if f['selected'] and f.get('rank', 999) <= 5])
-            medium_count = len([f for f in self.rfe_selected_features.values() if f['selected'] and 5 < f.get('rank', 999) <= 10])
-            # Fix: weak_count should be total_features - (strong + medium), not just selected weak features
-            total_features = len(self.rfe_selected_features)
-            weak_count = total_features - strong_count - medium_count
-            
-            logger.info(f"Applied RFE weights: strong={strong_count}, medium={medium_count}, weak={weak_count}")
-            logger.info(f"🚀 RFE completed! Selected {len([f for f in self.rfe_selected_features.values() if f['selected']])} features")
+            # Single concise summary log (replaces old duplicate logging)
+            logger.info(f"🚀 RFE completed! Selected {len(self.selected_features)} features")
             
             return self.rfe_selected_features
             
@@ -435,6 +440,49 @@ class FeatureGatingModule(nn.Module):
         except Exception as e:
             logger.error(f"Error generating diverse labels: {str(e)}")
             return np.full(len(close_prices), 2)  # All HOLD as fallback
+    
+    def _build_feature_categories(self):
+        """
+        Build feature categories based on rank thresholds and update counts.
+        
+        Categories:
+        - strong: rank <= target_features
+        - medium: rank <= 2*target_features  
+        - weak: rank > 2*target_features
+        """
+        self.feature_categories = {}
+        strong_count = 0
+        medium_count = 0
+        weak_count = 0
+        
+        for feature_name, info in self.rfe_selected_features.items():
+            rank = info.get('rank', 999)
+            selected = info.get('selected', False)
+            
+            # Assign category based on rank thresholds
+            if rank <= self.rfe_n_features:
+                category = 'strong'
+                strong_count += 1
+            elif rank <= 2 * self.rfe_n_features:
+                category = 'medium' 
+                medium_count += 1
+            else:
+                category = 'weak'
+                weak_count += 1
+            
+            self.feature_categories[feature_name] = {
+                'selected': selected,
+                'rank': rank,
+                'category': category
+            }
+        
+        # Update counts
+        self.rfe_counts = {
+            'strong': strong_count,
+            'medium': medium_count, 
+            'weak': weak_count
+        }
+    
     
     def _perform_fallback_selection(self, training_data, labels, n_samples):
         """
@@ -782,7 +830,7 @@ class FeatureGatingModule(nn.Module):
     
     def apply_rfe_weights(self):
         """
-        Apply RFE weights to the gating module and return success status
+        Apply RFE weights to the gating module with single static mapping.
         
         Returns:
             bool: True if RFE weights were successfully applied, False otherwise
@@ -797,8 +845,16 @@ class FeatureGatingModule(nn.Module):
                 logger.warning("No RFE weights available to apply")
                 return False
             
-            # Update the gating state with RFE weights - mark as successfully applied
-            logger.info("RFE weights successfully applied to gating module")
+            # Single mapping of categories to static weights
+            weight_mapping = {
+                'strong': 0.85,
+                'medium': 0.55, 
+                'weak': self.min_weight
+            }
+            
+            # Single concise summary log
+            logger.info(f"RFE weight mapping applied once: strong={weight_mapping['strong']:.2f} medium={weight_mapping['medium']:.2f} weak={weight_mapping['weak']:.3f}")
+            
             return True
             
         except Exception as e:
@@ -883,47 +939,50 @@ class FeatureGatingModule(nn.Module):
     
     def get_rfe_summary(self):
         """
-        Get RFE summary for API and logging
+        Get RFE summary for API and logging with consistent payload.
         
         Returns:
-            Dictionary with RFE summary information
+            Dictionary with RFE summary information including:
+            - rfe_performed, total_available, total_cleaned, total_selected
+            - strong, medium, weak counts
+            - target_features, top_features (limited to 10)
         """
         if not self.rfe_performed:
             return {
                 'rfe_performed': False,
+                'total_available': 0,
+                'total_cleaned': 0,
                 'total_selected': 0,
-                'total_available': 0,  # Fix: Add missing total_available field
+                'strong': 0,
+                'medium': 0, 
+                'weak': 0,
                 'target_features': self.rfe_n_features,
-                'selection_breakdown': {},
                 'top_features': []
             }
         
-        selected_features = [name for name, info in self.rfe_selected_features.items() if info['selected']]
+        # Use unified state attributes
+        total_available = len(self.rfe_all_features)
+        total_cleaned = total_available  # Same unless tracking raw pre-clean length
+        total_selected = len(self.selected_features)
         
-        # Group breakdown
-        selection_breakdown = {}
-        for name, info in self.rfe_selected_features.items():
-            group = name.split('.')[0] if '.' in name else name
-            if group not in selection_breakdown:
-                selection_breakdown[group] = {'total': 0, 'selected': 0}
-            selection_breakdown[group]['total'] += 1
-            if info['selected']:
-                selection_breakdown[group]['selected'] += 1
-        
-        # Top features by importance
-        top_features = sorted(
-            [(name, info['importance']) for name, info in self.rfe_selected_features.items() if info['selected']],
-            key=lambda x: x[1], reverse=True
+        # Top features by rank (lower is better), limited to 10
+        sorted_features = sorted(
+            [(name, info) for name, info in self.rfe_selected_features.items() if info['selected']],
+            key=lambda x: x[1]['rank']
         )
-        top_feature_names = [name for name, _ in top_features[:10]]
+        top_features = [(name, {'rank': info['rank'], 'importance': info['importance']}) 
+                       for name, info in sorted_features[:10]]
         
         return {
             'rfe_performed': True,
-            'total_selected': len(selected_features),
-            'total_available': len(self.rfe_selected_features),  # Fix: Add missing total_available field
+            'total_available': total_available,
+            'total_cleaned': total_cleaned,
+            'total_selected': total_selected,
+            'strong': self.rfe_counts['strong'],
+            'medium': self.rfe_counts['medium'],
+            'weak': self.rfe_counts['weak'],
             'target_features': self.rfe_n_features,
-            'selection_breakdown': selection_breakdown,
-            'top_features': top_feature_names
+            'top_features': top_features
         }
     
     def forward(self, features_dict):

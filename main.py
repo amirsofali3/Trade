@@ -410,7 +410,8 @@ class TradingBot:
             
             # Calculate indicators
             logger.info("📈 Calculating technical indicators...")
-            indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe)
+            profile_enabled = self.config.get('indicators', {}).get('profile', True)
+            indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe, profile=profile_enabled)
             
             if indicators_result:
                 # Convert indicators to timestamped DataFrame - fix fragmentation
@@ -573,7 +574,8 @@ class TradingBot:
                         continue
                     
                     # Calculate indicators for this sample
-                    indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe)
+                    profile_enabled = self.config.get('indicators', {}).get('profile', True)
+                    indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe, profile=profile_enabled)
                     if not indicators_result:
                         continue
                     
@@ -648,7 +650,8 @@ class TradingBot:
                 logger.warning("⚠️ Single-class labels in warmup data - model may still have stuck confidence")
             
             # Perform warmup training
-            warmup_results = self.learner.perform_warmup_training(warmup_samples, max_batches=30)
+            max_warmup_seconds = self.config.get('training', {}).get('max_warmup_seconds', 120)
+            warmup_results = self.learner.perform_warmup_training(warmup_samples, max_batches=30, max_seconds=max_warmup_seconds)
             
             if warmup_results['batches_completed'] > 0:
                 initial_loss = warmup_results.get('initial_loss', 'N/A')
@@ -1237,7 +1240,8 @@ class TradingBot:
         # Calculate indicators
         indicators = {}
         if not ohlcv_data.empty:
-            indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe)
+            profile_enabled = self.config.get('indicators', {}).get('profile', True)
+            indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe, profile=profile_enabled)
             indicators = {name: values[-20:] if len(values) > 20 else values for name, values in indicators_result.items()}
         
         # Get latest sentiment
@@ -1458,6 +1462,24 @@ class TradingBot:
             return 'neutral'
 
 
+def _inject_config_defaults(config):
+    """
+    Inject default configuration values for training and indicators sections.
+    
+    Args:
+        config: Configuration dictionary to modify in-place
+    """
+    # Training defaults
+    if 'training' not in config:
+        config['training'] = {}
+    config['training'].setdefault('max_warmup_seconds', 120)
+    
+    # Indicators defaults  
+    if 'indicators' not in config:
+        config['indicators'] = {}
+    config['indicators'].setdefault('profile', True)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Trading Bot')
     parser.add_argument('--config', type=str, default='config.json', help='Path to configuration file')
@@ -1502,6 +1524,9 @@ if __name__ == "__main__":
                 'update_interval': 60  # Reduced to 60 seconds for development testing
             }
         }
+    
+    # Inject config defaults for training and indicators sections
+    _inject_config_defaults(config)
     
     # Create and start bot
     bot = TradingBot(config)
