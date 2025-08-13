@@ -19,7 +19,7 @@ class MarketTransformer(nn.Module):
     Transformer-based model for market prediction with context-aware feature gating
     """
     
-    def __init__(self, feature_dims, hidden_dim=128, n_layers=2, n_heads=4, dropout=0.1):
+    def __init__(self, feature_dims, hidden_dim=128, n_layers=2, n_heads=4, dropout=0.1, gating_module=None):
         """
         Initialize Market Transformer with projection layers for consistent dimensions
         
@@ -31,10 +31,12 @@ class MarketTransformer(nn.Module):
             n_layers: Number of transformer layers
             n_heads: Number of attention heads
             dropout: Dropout rate
+            gating_module: Optional gating module for scalar feature weighting
         """
         super(MarketTransformer, self).__init__()
         self.feature_dims = feature_dims
         self.hidden_dim = hidden_dim
+        self.gating_module = gating_module
         
         # Calculate total feature dimension
         self.total_feature_dim = sum(dim[1] for dim in feature_dims.values())
@@ -72,6 +74,7 @@ class MarketTransformer(nn.Module):
         self.fc2 = nn.Linear(hidden_dim, 3)  # Outputs: [buy_prob, sell_prob, hold_prob]
         
         logger.info(f"Initialized MarketTransformer with hidden_dim={hidden_dim}, n_layers={n_layers}, n_heads={n_heads}")
+        logger.info(f"Gating module: {'enabled' if gating_module else 'disabled'}")
     
     def _create_position_encoding(self, seq_len, d_model):
         """Create position encoding for transformer"""
@@ -301,6 +304,19 @@ class MarketTransformer(nn.Module):
                     seq_len_actual = min(embedded.shape[1], self.position_encoding.shape[1])
                     embedded[:, :seq_len_actual, :] += self.position_encoding[:, :seq_len_actual, :]
                 
+                # Apply scalar gating AFTER projection to ensure dimensional consistency
+                if self.gating_module is not None:
+                    try:
+                        # Get scalar weight for this group from gating module
+                        scalar_weight = self.gating_module.get_scalar_weight(name)
+                        embedded = scalar_weight * embedded
+                        logger.debug(f"Applied scalar gating to {name}: weight={scalar_weight:.4f}, post_gate_shape={embedded.shape}")
+                    except Exception as e:
+                        logger.warning(f"Failed to apply gating to {name}: {e}")
+                
+                # Log dimensions before fusion for debugging
+                logger.debug(f"group={name} in_dim={x.shape[-1] if len(x.shape) > 1 else x.shape[0]}, post_projection_dim={embedded.shape[-1]}, projected_dim={self.hidden_dim}")
+                
                 embedded_features.append(embedded)
         
         if not embedded_features:
@@ -313,7 +329,11 @@ class MarketTransformer(nn.Module):
         
         # Expand all features to max sequence length
         expanded_features = []
-        for feat in embedded_features:
+        for i, feat in enumerate(embedded_features):
+            # Runtime assertion: ensure all features have hidden_dim
+            if feat.shape[-1] != self.hidden_dim:
+                raise ValueError(f"Feature {i} dimension mismatch: expected {self.hidden_dim}, got {feat.shape[-1]}")
+            
             if feat.shape[1] < max_seq_len:
                 # Expand by repeating the last timestep
                 seq_diff = max_seq_len - feat.shape[1]
@@ -323,6 +343,9 @@ class MarketTransformer(nn.Module):
                 feat_expanded = torch.cat([feat, repeated], dim=1)
             else:
                 feat_expanded = feat
+            
+            # Final dimension check before fusion
+            assert feat_expanded.shape[-1] == self.hidden_dim, f"Dimension mismatch before fusion: {feat_expanded.shape[-1]} != {self.hidden_dim}"
             expanded_features.append(feat_expanded)
         
         # Concatenate along the hidden dimension (sum embeddings)

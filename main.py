@@ -63,6 +63,10 @@ class TradingBot:
         self.config = config
         self.is_running = False
         
+        # Exception tracking for diagnostics
+        self.recent_exceptions = []
+        self.max_recent_exceptions = 10
+        
         # MySQL connection string
         mysql_config = config.get('mysql', {})
         connection_string = f"mysql+pymysql://{mysql_config.get('user')}:{mysql_config.get('password')}@{mysql_config.get('host')}/{mysql_config.get('database')}"
@@ -704,7 +708,8 @@ class TradingBot:
             hidden_dim=model_config.get('hidden_dim', 128),
             n_layers=model_config.get('n_layers', 2),
             n_heads=model_config.get('n_heads', 4),
-            dropout=model_config.get('dropout', 0.1)
+            dropout=model_config.get('dropout', 0.1),
+            gating_module=self.gating  # Pass gating module for scalar weighting
         )
         
         # Online learner
@@ -873,15 +878,12 @@ class TradingBot:
                 # Process data
                 features = self._process_data(data)
                 
-                # Apply gating mechanism
-                gated_features = self.gating(features)
-                
-                # Generate trading signal
+                # Generate trading signal (gating is now applied inside the model)
                 active_features = self.gating.get_active_features()
                 current_price = data.get('ohlcv', pd.DataFrame()).iloc[-1].close if not data.get('ohlcv', pd.DataFrame()).empty else 0
                 
                 signal = self.signal_generator.generate_signal(
-                    gated_features, 
+                    features,  # Pass raw features; gating applied internally 
                     active_features,
                     current_price
                 )
@@ -907,7 +909,23 @@ class TradingBot:
                 time.sleep(5)  # Check every 5 seconds
             
             except Exception as e:
+                import traceback
+                from datetime import datetime
+                
+                # Capture exception details
+                exception_info = {
+                    'timestamp': datetime.now().isoformat(),
+                    'message': str(e),
+                    'traceback': traceback.format_exc()[:1000]  # Limit traceback size
+                }
+                
+                # Add to recent exceptions buffer
+                self.recent_exceptions.append(exception_info)
+                if len(self.recent_exceptions) > self.max_recent_exceptions:
+                    self.recent_exceptions.pop(0)  # Keep only recent exceptions
+                
                 logger.error(f"Error in main loop: {str(e)}")
+                logger.debug(f"Exception traceback: {traceback.format_exc()}")
                 time.sleep(10)  # Wait longer on error
     
     def _process_signal(self, signal, current_price, data, gated_features=None, active_features=None):

@@ -687,6 +687,11 @@ def diagnostics():
             'gating_weight_stats': {'min': 0.0, 'mean': 0.0, 'max': 0.0},
             'last_train_time': None,
             'last_rfe_time': None,
+            'recent_exceptions': [],
+            'last_exception': None,
+            'last_exception_trace': None,
+            'tensor_dimensions': {},
+            'projection_status': {},
             'system_info': {
                 'timestamp': datetime.now().isoformat(),
                 'bot_status': data_store.get('bot_status', 'unknown')
@@ -694,6 +699,32 @@ def diagnostics():
         }
         
         if bot_instance:
+            # Recent exceptions
+            if hasattr(bot_instance, 'recent_exceptions'):
+                result['recent_exceptions'] = bot_instance.recent_exceptions
+                if bot_instance.recent_exceptions:
+                    last_exception = bot_instance.recent_exceptions[-1]
+                    result['last_exception'] = last_exception.get('message')
+                    result['last_exception_trace'] = last_exception.get('traceback')
+            
+            # Tensor dimensions and projection status
+            if hasattr(bot_instance, 'model'):
+                try:
+                    model = bot_instance.model
+                    if hasattr(model, 'feature_dims'):
+                        result['tensor_dimensions'] = model.feature_dims
+                    if hasattr(model, 'projections'):
+                        projection_status = {}
+                        for name, projection in model.projections.items():
+                            projection_status[name] = {
+                                'in_features': projection.in_features,
+                                'out_features': projection.out_features,
+                                'projection_applied': True
+                            }
+                        result['projection_status'] = projection_status
+                except Exception as e:
+                    logger.debug(f"Error getting tensor dimensions: {str(e)}")
+            
             # Buffer length from learner
             if hasattr(bot_instance, 'learner') and hasattr(bot_instance.learner, 'experience_buffer'):
                 buffer = bot_instance.learner.experience_buffer
@@ -738,7 +769,12 @@ def diagnostics():
             'buffer_length': 0,
             'gating_weight_stats': {'min': 0.0, 'mean': 0.0, 'max': 0.0},
             'last_train_time': None,
-            'last_rfe_time': None
+            'last_rfe_time': None,
+            'recent_exceptions': [],
+            'last_exception': None,
+            'last_exception_trace': None,
+            'tensor_dimensions': {},
+            'projection_status': {}
         }), 500
 
 @app.route('/api/plot')
