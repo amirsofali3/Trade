@@ -489,45 +489,11 @@ class TradingBot:
                 rfe_summary = self.gating.get_rfe_summary()
                 rfe_weights = self.gating.get_rfe_weights()
                 
-                # Count weight categories using feature-based approach (not tensor dimensions)
-                # This fixes the inconsistency between (15/0/109) vs (1/0/258) vs tensor dimension counts
-                strong_count = medium_count = weak_count = 0
+                # Use unified RFE summary instead of duplicate counting
+                rfe_summary = self.gating.get_rfe_summary()
                 
-                # Count based on actual RFE selected features, not tensor dimensions
-                if hasattr(self.gating, 'rfe_selected_features') and self.gating.rfe_selected_features:
-                    for feature_name, feature_info in self.gating.rfe_selected_features.items():
-                        if feature_info['selected']:
-                            # Categorize selected features by rank/importance
-                            rank = feature_info.get('rank', 999)
-                            if rank <= 5:
-                                strong_count += 1
-                            elif rank <= 10:
-                                medium_count += 1
-                            # Note: selected weak features are already counted here
-                    
-                    # Fix: weak_count should be total_features - (strong + medium) to match gating.py logic
-                    total_features = len(self.gating.rfe_selected_features)
-                    weak_count = total_features - strong_count - medium_count
-                else:
-                    # Fallback: if no RFE results, use tensor counting but log the inconsistency
-                    logger.warning("No RFE features available, falling back to tensor dimension counting")
-                    for group_weights in rfe_weights.values():
-                        if isinstance(group_weights, torch.Tensor):
-                            weights_np = group_weights.detach().cpu().numpy()
-                            strong_count += int(np.sum(weights_np >= 0.7))
-                            medium_count += int(np.sum((weights_np >= 0.3) & (weights_np < 0.7)))
-                            weak_count += int(np.sum(weights_np < 0.3))
-                        else:
-                            # Handle scalar weights
-                            weight_val = float(group_weights)
-                            if weight_val >= 0.7:
-                                strong_count += 1
-                            elif weight_val >= 0.3:
-                                medium_count += 1
-                            else:
-                                weak_count += 1
-                
-                logger.info(f"Applied RFE weights: strong={strong_count}, medium={medium_count}, weak={weak_count}")
+                # Log using unified summary data (replaces duplicate counting)
+                logger.info(f"Applied RFE weights: strong={rfe_summary['strong']}, medium={rfe_summary['medium']}, weak={rfe_summary['weak']}")
                 logger.info("🚀 RFE feature selection completed!")
                 logger.info(f"Selected {rfe_summary['total_selected']} features out of {rfe_summary.get('total_available', 0)} available")
                 

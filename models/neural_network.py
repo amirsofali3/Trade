@@ -490,7 +490,7 @@ class OnlineLearner:
                 try:
                     # Forward pass
                     self.optimizer.zero_grad()
-                    logits, confidences = self.model([features_dict])
+                    logits, confidences = self.model(features_dict)
                     
                     # Calculate loss
                     loss = F.cross_entropy(logits, torch.tensor([label], dtype=torch.long))
@@ -534,7 +534,8 @@ class OnlineLearner:
             loss_end = final_loss or 0.0
             
             # Final summary log
-            logger.info(f"Warmup complete: batches={batches_completed} duration={elapsed_total:.1f}s loss_start={loss_start:.4f} loss_end={loss_end:.4f} avg={avg_loss:.4f if avg_loss else 0:.4f}")
+            avg_loss_str = f"{avg_loss:.4f}" if avg_loss is not None else "0.0000"
+            logger.info(f"Warmup complete: batches={batches_completed} duration={elapsed_total:.1f}s loss_start={loss_start:.4f} loss_end={loss_end:.4f} avg={avg_loss_str}")
             
             # Store summary for diagnostics (optional)
             warmup_summary = {
