@@ -410,7 +410,8 @@ class TradingBot:
             
             # Calculate indicators
             logger.info("📈 Calculating technical indicators...")
-            indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe)
+            profile_enabled = self.config.get('indicators', {}).get('profile', True)
+            indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe, profile=profile_enabled)
             
             if indicators_result:
                 # Convert indicators to timestamped DataFrame - fix fragmentation
@@ -488,45 +489,11 @@ class TradingBot:
                 rfe_summary = self.gating.get_rfe_summary()
                 rfe_weights = self.gating.get_rfe_weights()
                 
-                # Count weight categories using feature-based approach (not tensor dimensions)
-                # This fixes the inconsistency between (15/0/109) vs (1/0/258) vs tensor dimension counts
-                strong_count = medium_count = weak_count = 0
+                # Use unified RFE summary instead of duplicate counting
+                rfe_summary = self.gating.get_rfe_summary()
                 
-                # Count based on actual RFE selected features, not tensor dimensions
-                if hasattr(self.gating, 'rfe_selected_features') and self.gating.rfe_selected_features:
-                    for feature_name, feature_info in self.gating.rfe_selected_features.items():
-                        if feature_info['selected']:
-                            # Categorize selected features by rank/importance
-                            rank = feature_info.get('rank', 999)
-                            if rank <= 5:
-                                strong_count += 1
-                            elif rank <= 10:
-                                medium_count += 1
-                            # Note: selected weak features are already counted here
-                    
-                    # Fix: weak_count should be total_features - (strong + medium) to match gating.py logic
-                    total_features = len(self.gating.rfe_selected_features)
-                    weak_count = total_features - strong_count - medium_count
-                else:
-                    # Fallback: if no RFE results, use tensor counting but log the inconsistency
-                    logger.warning("No RFE features available, falling back to tensor dimension counting")
-                    for group_weights in rfe_weights.values():
-                        if isinstance(group_weights, torch.Tensor):
-                            weights_np = group_weights.detach().cpu().numpy()
-                            strong_count += int(np.sum(weights_np >= 0.7))
-                            medium_count += int(np.sum((weights_np >= 0.3) & (weights_np < 0.7)))
-                            weak_count += int(np.sum(weights_np < 0.3))
-                        else:
-                            # Handle scalar weights
-                            weight_val = float(group_weights)
-                            if weight_val >= 0.7:
-                                strong_count += 1
-                            elif weight_val >= 0.3:
-                                medium_count += 1
-                            else:
-                                weak_count += 1
-                
-                logger.info(f"Applied RFE weights: strong={strong_count}, medium={medium_count}, weak={weak_count}")
+                # Log using unified summary data (replaces duplicate counting)
+                logger.info(f"Applied RFE weights: strong={rfe_summary['strong']}, medium={rfe_summary['medium']}, weak={rfe_summary['weak']}")
                 logger.info("🚀 RFE feature selection completed!")
                 logger.info(f"Selected {rfe_summary['total_selected']} features out of {rfe_summary.get('total_available', 0)} available")
                 
@@ -573,7 +540,8 @@ class TradingBot:
                         continue
                     
                     # Calculate indicators for this sample
-                    indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe)
+                    profile_enabled = self.config.get('indicators', {}).get('profile', True)
+                    indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe, profile=profile_enabled)
                     if not indicators_result:
                         continue
                     
@@ -648,7 +616,8 @@ class TradingBot:
                 logger.warning("⚠️ Single-class labels in warmup data - model may still have stuck confidence")
             
             # Perform warmup training
-            warmup_results = self.learner.perform_warmup_training(warmup_samples, max_batches=30)
+            max_warmup_seconds = self.config.get('training', {}).get('max_warmup_seconds', 120)
+            warmup_results = self.learner.perform_warmup_training(warmup_samples, max_batches=30, max_seconds=max_warmup_seconds)
             
             if warmup_results['batches_completed'] > 0:
                 initial_loss = warmup_results.get('initial_loss', 'N/A')
@@ -1237,7 +1206,8 @@ class TradingBot:
         # Calculate indicators
         indicators = {}
         if not ohlcv_data.empty:
-            indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe)
+            profile_enabled = self.config.get('indicators', {}).get('profile', True)
+            indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe, profile=profile_enabled)
             indicators = {name: values[-20:] if len(values) > 20 else values for name, values in indicators_result.items()}
         
         # Get latest sentiment
@@ -1458,6 +1428,24 @@ class TradingBot:
             return 'neutral'
 
 
+def _inject_config_defaults(config):
+    """
+    Inject default configuration values for training and indicators sections.
+    
+    Args:
+        config: Configuration dictionary to modify in-place
+    """
+    # Training defaults
+    if 'training' not in config:
+        config['training'] = {}
+    config['training'].setdefault('max_warmup_seconds', 120)
+    
+    # Indicators defaults  
+    if 'indicators' not in config:
+        config['indicators'] = {}
+    config['indicators'].setdefault('profile', True)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Trading Bot')
     parser.add_argument('--config', type=str, default='config.json', help='Path to configuration file')
@@ -1502,6 +1490,9 @@ if __name__ == "__main__":
                 'update_interval': 60  # Reduced to 60 seconds for development testing
             }
         }
+    
+    # Inject config defaults for training and indicators sections
+    _inject_config_defaults(config)
     
     # Create and start bot
     bot = TradingBot(config)
