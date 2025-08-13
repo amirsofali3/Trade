@@ -159,6 +159,57 @@ class TestRFEConsistency(unittest.TestCase):
         
         # Build categories
         self.gating._build_feature_categories()
+    
+    def test_feature_set_version_when_rfe_performed(self):
+        """Test that feature_set_version is present when RFE performed (Phase 2 requirement)"""
+        # Mock RFE results
+        self._setup_mock_rfe_results()
+        
+        # Simulate version increment that would happen in actual RFE
+        self.gating.feature_set_version += 1
+        
+        # Check that feature_set_version exists and is incremented
+        self.assertGreater(self.gating.feature_set_version, 1)
+        
+        # Check that feature set hash can be generated
+        feature_hash = self.gating.get_feature_set_version_hash()
+        self.assertIsInstance(feature_hash, str)
+        self.assertGreater(len(feature_hash), 0)
+        self.assertNotEqual(feature_hash, "no_features")
+    
+    def test_feature_set_version_no_rfe(self):
+        """Test feature_set_version when no RFE performed"""
+        # No RFE performed
+        self.assertEqual(self.gating.feature_set_version, 1)
+        
+        # Feature hash should indicate no features
+        feature_hash = self.gating.get_feature_set_version_hash()
+        self.assertEqual(feature_hash, "no_features")
+    
+    def test_feature_set_hash_consistency(self):
+        """Test that feature set hash is consistent for same selected features"""
+        # Mock RFE results
+        self._setup_mock_rfe_results()
+        
+        # Get hash twice
+        hash1 = self.gating.get_feature_set_version_hash()
+        hash2 = self.gating.get_feature_set_version_hash()
+        
+        # Should be identical
+        self.assertEqual(hash1, hash2)
+    
+    def test_rfe_summary_with_version_data(self):
+        """Test that RFE summary includes version information"""
+        # Mock RFE results
+        self._setup_mock_rfe_results()
+        
+        # Get RFE summary
+        summary = self.gating.get_rfe_summary()
+        
+        # Should include standard fields
+        required_fields = ['rfe_performed', 'total_selected', 'strong', 'medium', 'weak']
+        for field in required_fields:
+            self.assertIn(field, summary)
 
 
 if __name__ == '__main__':

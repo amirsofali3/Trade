@@ -36,15 +36,28 @@
     "enabled": true,
     "lookahead": 3,
     "initial_threshold": 0.002,
-    "min_samples": 30
+    "min_samples": 30,
+    "periodic": {
+      "enabled": false,
+      "interval_minutes": 30
+    },
+    "trigger": {
+      "performance_drop_pct": 15
+    }
   },
   "training": {
-    "warmup_enabled": true
+    "warmup_enabled": true,
+    "max_warmup_seconds": 120
   },
   "online": {
     "update_interval": 60
   },
   "data": {
     "max_candles_for_rfe": 1000
+  },
+  "indicators": {
+    "use_selected_only": false,
+    "min_active_features": 10,
+    "profile": true
   }
 }

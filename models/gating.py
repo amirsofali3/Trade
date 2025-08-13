@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import time
+import hashlib
 from datetime import datetime
 import tempfile
 import os
@@ -70,6 +71,21 @@ class FeatureGatingModule(nn.Module):
         self.feature_categories = {}  # Dict: feature_name -> {selected, rank, category}
         self.rfe_counts = {'strong': 0, 'medium': 0, 'weak': 0}  # Category counts
         self.total_raw_features = 0  # Optional: raw count if differs from cleaned
+        
+        # Active feature masks for each group (Phase 2 requirement)
+        self.active_feature_masks = {}  # Dict: group_name -> boolean mask of active features
+        self.group_feature_indices = {}  # Dict: group_name -> original indices in the full feature matrix
+        
+        # Feature set versioning (Phase 2 requirement) 
+        self.feature_set_version = 1  # Simple integer version increment
+        self.last_rfe_time = None
+        
+        # Periodic RFE tracking (Phase 2 requirement)
+        self.last_performance_check = time.time()
+        self.recent_success_rates = []  # Rolling window for performance tracking
+        
+        # Gating adaptation control (Phase 2 requirement)
+        self.freeze_adaptation = False  # When True, adaptation is disabled during warmup
         
         # Create gate networks for each feature group
         self.gate_networks = nn.ModuleDict()
@@ -375,6 +391,8 @@ class FeatureGatingModule(nn.Module):
                         self.feature_performance[group_name]['rfe_rank'] = self.rfe_selected_features[group_name]['rank']
             
             self.rfe_performed = True
+            self.last_rfe_time = time.time()
+            self.feature_set_version += 1
             self.rfe_model = rfe
             
             # Populate new unified RFE state attributes
@@ -673,6 +691,8 @@ class FeatureGatingModule(nn.Module):
                         self.feature_performance[group_name]['rfe_rank'] = self.rfe_selected_features[group_name]['rank']
             
             self.rfe_performed = True
+            self.last_rfe_time = time.time()
+            self.feature_set_version += 1
             
             # Save results to file
             self._save_rfe_results_to_file()
@@ -739,6 +759,8 @@ class FeatureGatingModule(nn.Module):
                         self.feature_performance[group_name]['rfe_rank'] = self.rfe_selected_features[group_name]['rank']
             
             self.rfe_performed = True
+            self.last_rfe_time = time.time() 
+            self.feature_set_version += 1
             
             # Persist RFE results to JSON file  
             self._save_rfe_results_to_file()
@@ -1405,3 +1427,324 @@ class FeatureGatingModule(nn.Module):
                 return 0.5  # Medium weight
             else:
                 return float(self.min_weight)  # Weak weight
+    
+    # Phase 2 Enhancement Methods
+    
+    def build_active_feature_masks(self, min_active_features=10):
+        """
+        Build persistent active feature masks for each group referencing original index positions.
+        
+        This method creates boolean masks indicating which features in each group should be 
+        actively computed and used based on RFE selection results. Implements fallback logic
+        to ensure minimum feature count requirements are met.
+        
+        Args:
+            min_active_features: Minimum number of active features required across all groups
+            
+        Returns:
+            Dict[str, np.ndarray]: Dictionary mapping group names to boolean masks of active features
+            
+        Raises:
+            Warning: If RFE has not been performed yet
+        """
+        if not self.rfe_performed:
+            logger.warning("Cannot build active feature masks without RFE results")
+            return {}
+        
+        active_masks = {}
+        
+        for group_name in self.feature_groups.keys():
+            group_mask = []
+            
+            if group_name == 'indicator':
+                # For indicators, check each individual indicator
+                for i, indicator_name in enumerate(self._get_indicator_names()):
+                    feature_key = f"indicator.{indicator_name}"
+                    is_selected = (feature_key in self.rfe_selected_features and 
+                                 self.rfe_selected_features[feature_key]['selected'])
+                    group_mask.append(is_selected)
+            else:
+                # For other groups (ohlcv, sentiment, orderbook), check group-level selection
+                feature_key = group_name
+                is_selected = (feature_key in self.rfe_selected_features and 
+                             self.rfe_selected_features[feature_key]['selected'])
+                # Create mask for all features in the group
+                group_size = self.feature_groups[group_name]
+                group_mask = [is_selected] * group_size
+            
+            active_masks[group_name] = np.array(group_mask, dtype=bool)
+        
+        # Fallback: ensure minimum active features
+        total_active = sum(np.sum(mask) for mask in active_masks.values())
+        if total_active < min_active_features:
+            self._ensure_minimum_active_features(active_masks, min_active_features)
+        
+        self.active_feature_masks = active_masks
+        return active_masks
+    
+    def _ensure_minimum_active_features(self, active_masks, min_features):
+        """
+        Ensure minimum number of active features by adding medium/weak features.
+        """
+        current_count = sum(np.sum(mask) for mask in active_masks.values())
+        if current_count >= min_features:
+            return
+        
+        needed = min_features - current_count
+        logger.info(f"Adding {needed} features to meet minimum threshold of {min_features}")
+        
+        # Get all features sorted by rank (best first)
+        all_features = [(name, info) for name, info in self.rfe_selected_features.items()]
+        all_features.sort(key=lambda x: x[1]['rank'])
+        
+        added = 0
+        for feature_name, info in all_features:
+            if added >= needed:
+                break
+                
+            if not info['selected']:  # Only add unselected features
+                # Determine which group this feature belongs to
+                if feature_name.startswith('indicator.'):
+                    group = 'indicator'
+                    indicator_name = feature_name.split('.', 1)[1]
+                    idx = self._get_indicator_index(indicator_name)
+                    if idx >= 0 and idx < len(active_masks[group]):
+                        active_masks[group][idx] = True
+                        added += 1
+                else:
+                    if feature_name in self.feature_groups:
+                        # Group-level feature - activate all features in group
+                        active_masks[feature_name][:] = True
+                        added += 1
+    
+    def _get_indicator_names(self):
+        """Get list of indicator names in order they appear in feature matrix."""
+        # This should match the order in IndicatorCalculator
+        return [
+            'sma', 'ema', 'rsi', 'macd', 'macd_signal', 'macd_hist',
+            'stoch_k', 'stoch_d', 'bbands_upper', 'bbands_middle', 'bbands_lower',
+            'adx', 'atr', 'supertrend', 'willr', 'mfi', 'obv', 'ad', 'vwap',
+            'engulfing', 'ppo', 'psar', 'trix', 'dmi', 'aroon', 'cci', 'dpo', 
+            'kst', 'ichimoku', 'tema', 'roc', 'momentum', 'bop', 'apo', 'cmo',
+            'rsi_2', 'rsi_14', 'stoch_fast', 'stoch_slow', 'ultimate_osc', 
+            'kama', 'fisher', 'awesome_osc', 'bias', 'dmi_adx', 'tsi',
+            'elder_ray', 'schaff_trend', 'chaikin_osc', 'mass_index', 'keltner',
+            'donchian', 'volatility', 'chaikin_vol', 'std_dev', 'rvi', 
+            'true_range', 'avg_range', 'natr', 'pvt', 'envelope', 
+            'price_channel', 'volatility_system', 'cmf', 'emv', 'fi', 'nvi', 
+            'pvi', 'vol_osc', 'vol_rate', 'klinger', 'vol_sma', 'vol_ema', 
+            'mfv', 'ad_line', 'obv_ma', 'vol_price_confirm', 'vol_weighted_macd', 
+            'ease_of_movement', 'vol_accumulation', 'shooting_star', 'hanging_man',
+            'morning_star', 'evening_star', 'three_white_soldiers', 
+            'three_black_crows', 'harami', 'piercing', 'dark_cloud', 
+            'spinning_top', 'marubozu', 'gravestone_doji', 'dragonfly_doji',
+            'tweezer', 'inside_bar', 'outside_bar', 'pin_bar', 'gap_up',
+            'gap_down', 'long_legged_doji', 'rickshaw_man', 'belt_hold',
+            'hammer', 'doji'
+        ]
+    
+    def _get_indicator_index(self, indicator_name):
+        """Get the index of an indicator in the feature matrix."""
+        indicator_names = self._get_indicator_names()
+        try:
+            return indicator_names.index(indicator_name)
+        except ValueError:
+            return -1
+    
+    def should_trigger_periodic_rfe(self, config, current_performance=None):
+        """
+        Check if periodic RFE should be triggered based on time interval or performance drop.
+        
+        Implements both time-based and performance-based triggers for automatic RFE re-execution.
+        Time-based triggers activate after a configured interval has elapsed. Performance-based
+        triggers activate when trading success rate drops below a threshold.
+        
+        Args:
+            config: Configuration dict with RFE settings containing:
+                - rfe.periodic.enabled: Whether periodic RFE is enabled
+                - rfe.periodic.interval_minutes: Time interval for periodic triggers  
+                - rfe.trigger.performance_drop_pct: Performance drop threshold percentage
+            current_performance: Current success rate (0.0-1.0), optional
+            
+        Returns:
+            bool: True if RFE should be triggered, False otherwise
+        """
+        rfe_config = config.get('rfe', {})
+        periodic_config = rfe_config.get('periodic', {})
+        trigger_config = rfe_config.get('trigger', {})
+        
+        if not periodic_config.get('enabled', False):
+            return False
+        
+        current_time = time.time()
+        
+        # Check time-based trigger
+        interval_minutes = periodic_config.get('interval_minutes', 30)
+        time_elapsed = (current_time - self.last_rfe_time) / 60 if self.last_rfe_time else float('inf')
+        
+        if time_elapsed >= interval_minutes:
+            logger.info(f"Triggering periodic RFE: {time_elapsed:.1f} minutes elapsed (>= {interval_minutes})")
+            return True
+        
+        # Check performance-based trigger
+        if current_performance is not None:
+            min_threshold = 1.0 - (trigger_config.get('performance_drop_pct', 15) / 100.0)
+            if current_performance < min_threshold:
+                logger.info(f"Triggering RFE due to performance drop: {current_performance:.3f} < {min_threshold:.3f}")
+                return True
+        
+        return False
+    
+    def update_performance_tracking(self, success_rate):
+        """
+        Update performance tracking for periodic RFE decisions.
+        
+        Args:
+            success_rate: Current success rate (0.0-1.0)
+        """
+        self.recent_success_rates.append(success_rate)
+        
+        # Keep only last 20 values for rolling window
+        if len(self.recent_success_rates) > 20:
+            self.recent_success_rates.pop(0)
+        
+        self.last_performance_check = time.time()
+    
+    def get_feature_set_version_hash(self):
+        """
+        Generate SHA1 hash of sorted selected feature names for versioning.
+        
+        Creates a deterministic hash based on the currently selected feature set to enable
+        model checkpoint versioning and compatibility checking. The hash is generated from
+        a sorted list of selected feature names to ensure consistency across runs.
+        
+        Returns:
+            str: SHA1 hash (first 12 characters) of the feature set, or "no_features" if empty
+        """
+        if not self.selected_features:
+            return "no_features"
+        
+        # Sort feature names for consistent hashing
+        sorted_features = sorted(self.selected_features)
+        feature_string = '|'.join(sorted_features)
+        
+        return hashlib.sha1(feature_string.encode('utf-8')).hexdigest()[:12]
+    
+    def save_rfe_summary_with_version(self, checkpoint_path=None):
+        """
+        Save RFE summary with feature set version alongside model checkpoints.
+        
+        Args:
+            checkpoint_path: Path to model checkpoint (optional)
+        """
+        if not self.rfe_performed:
+            return
+        
+        summary = self.get_rfe_summary()
+        summary['feature_set_version'] = self.feature_set_version
+        summary['feature_set_hash'] = self.get_feature_set_version_hash()
+        summary['last_rfe_time'] = self.last_rfe_time or time.time()
+        
+        # Save to dedicated file
+        summary_path = 'rfe_summary_with_version.json'
+        if checkpoint_path:
+            # Save alongside checkpoint
+            import os
+            checkpoint_dir = os.path.dirname(checkpoint_path)
+            summary_path = os.path.join(checkpoint_dir, 'rfe_summary_with_version.json')
+        
+        try:
+            import json
+            with open(summary_path, 'w') as f:
+                json.dump(summary, f, indent=2, default=str)
+            logger.info(f"RFE summary with version saved to {summary_path}")
+        except Exception as e:
+            logger.error(f"Failed to save RFE summary with version: {e}")
+    
+    def load_checkpoint_with_compatibility(self, checkpoint_path):
+        """
+        Load model checkpoint with feature set compatibility checking (Phase 2).
+        
+        Provides backward compatibility for checkpoints that don't have feature_set_version.
+        If a version mismatch is detected, offers options to handle the incompatibility.
+        
+        Args:
+            checkpoint_path: Path to model checkpoint file
+            
+        Returns:
+            dict: Loading results with compatibility information
+        """
+        try:
+            import json
+            import os
+            
+            result = {
+                'loaded': False,
+                'compatible': False,
+                'version_mismatch': False,
+                'missing_features': [],
+                'action_taken': None
+            }
+            
+            # Check if RFE summary exists alongside checkpoint
+            checkpoint_dir = os.path.dirname(checkpoint_path)
+            summary_path = os.path.join(checkpoint_dir, 'rfe_summary_with_version.json')
+            
+            checkpoint_version = None
+            checkpoint_features = []
+            
+            if os.path.exists(summary_path):
+                try:
+                    with open(summary_path, 'r') as f:
+                        summary = json.load(f)
+                        checkpoint_version = summary.get('feature_set_version')
+                        checkpoint_features = summary.get('selected_features', [])
+                except Exception as e:
+                    logger.warning(f"Could not read RFE summary: {e}")
+            
+            # Get current feature set
+            current_version = self.feature_set_version
+            current_features = self.selected_features.copy()
+            
+            # Check compatibility
+            if checkpoint_version is None:
+                logger.info("Loading checkpoint without feature_set_version (backward compatibility)")
+                result['compatible'] = True
+                result['action_taken'] = 'backward_compatibility'
+            elif checkpoint_version == current_version:
+                logger.info(f"Checkpoint version {checkpoint_version} matches current version")
+                result['compatible'] = True
+                result['action_taken'] = 'version_match'
+            else:
+                logger.warning(f"Version mismatch: checkpoint={checkpoint_version}, current={current_version}")
+                result['version_mismatch'] = True
+                
+                # Check for missing features
+                missing = set(checkpoint_features) - set(current_features)
+                result['missing_features'] = list(missing)
+                
+                if missing:
+                    logger.info(f"Temporarily re-adding {len(missing)} missing features for compatibility")
+                    # Add missing features with minimum weight
+                    for feature_name in missing:
+                        if feature_name not in self.rfe_selected_features:
+                            self.rfe_selected_features[feature_name] = {
+                                'selected': True,
+                                'rank': 999,
+                                'importance': self.min_weight
+                            }
+                    
+                    # Update selected features list
+                    self.selected_features.extend(missing)
+                    result['action_taken'] = 'auto_expand_features'
+                    result['compatible'] = True
+                else:
+                    result['compatible'] = True
+                    result['action_taken'] = 'subset_compatible'
+            
+            result['loaded'] = True
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error loading checkpoint with compatibility: {e}")
+            return {'loaded': False, 'error': str(e)}

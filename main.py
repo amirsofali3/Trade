@@ -408,10 +408,28 @@ class TradingBot:
             valid_ohlcv = ohlcv_data.iloc[:-lookahead]  # Remove last samples to match labels
             features_by_group['ohlcv'] = valid_ohlcv.set_index('timestamp') if 'timestamp' in valid_ohlcv.columns else valid_ohlcv
             
-            # Calculate indicators
+            # Calculate indicators (Phase 2: Support selective computation)
             logger.info("📈 Calculating technical indicators...")
             profile_enabled = self.config.get('indicators', {}).get('profile', True)
-            indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe, profile=profile_enabled)
+            use_selected_only = self.config.get('indicators', {}).get('use_selected_only', False)
+            
+            # Get active indicators if RFE has been performed and selective mode is enabled
+            active_indicators = None
+            if use_selected_only and self.gating and self.gating.rfe_performed:
+                # Extract indicator names from RFE selected features
+                active_indicators = []
+                for feature_name, info in self.gating.rfe_selected_features.items():
+                    if feature_name.startswith('indicator.') and info['selected']:
+                        indicator_name = feature_name.split('.', 1)[1]
+                        active_indicators.append(indicator_name)
+                logger.info(f"Using {len(active_indicators)} selected indicators from RFE")
+            
+            indicators_result = self.collectors['indicators'].calculate_indicators(
+                symbol, timeframe, 
+                profile=profile_enabled,
+                use_selected_only=use_selected_only,
+                active_indicators=active_indicators
+            )
             
             if indicators_result:
                 # Convert indicators to timestamped DataFrame - fix fragmentation
@@ -492,10 +510,31 @@ class TradingBot:
                 # Use unified RFE summary instead of duplicate counting
                 rfe_summary = self.gating.get_rfe_summary()
                 
-                # Log using unified summary data (replaces duplicate counting)
-                logger.info(f"Applied RFE weights: strong={rfe_summary['strong']}, medium={rfe_summary['medium']}, weak={rfe_summary['weak']}")
+                # Phase 2: Build active feature masks after successful RFE
+                min_active_features = self.config.get('indicators', {}).get('min_active_features', 10)
+                active_masks = self.gating.build_active_feature_masks(min_active_features)
+                
+                total_active = sum(np.sum(mask) for mask in active_masks.values()) if active_masks else 0
+                logger.info(f"Built active feature masks: {total_active} total active features")
+                
+                # Save RFE summary with versioning
+                self.gating.save_rfe_summary_with_version()
+                
+                # Consolidated RFE logging (Phase 2 requirement)
+                total_cleaned = rfe_summary.get('total_available', 0)  
+                target_features = rfe_summary.get('target_features', self.gating.rfe_n_features)
+                selected = rfe_summary['total_selected']
+                strong = rfe_summary['strong']
+                medium = rfe_summary['medium']
+                weak = rfe_summary['weak']
+                
+                logger.info(f"RFE Summary: selected={selected}/{total_cleaned} (target={target_features}) strong={strong} medium={medium} weak={weak}")
                 logger.info("🚀 RFE feature selection completed!")
-                logger.info(f"Selected {rfe_summary['total_selected']} features out of {rfe_summary.get('total_available', 0)} available")
+                
+                # Enable use_selected_only for future indicator calculations
+                if not self.config.get('indicators', {}).get('use_selected_only', False):
+                    self.config['indicators']['use_selected_only'] = True
+                    logger.info("Enabled selective indicator computation for future cycles")
                 
                 return True
             else:
@@ -508,7 +547,8 @@ class TradingBot:
     
     def _perform_warmup_training(self):
         """
-        Perform initial warmup training to avoid stuck confidence values
+        Perform initial warmup training to avoid stuck confidence values.
+        Phase 2: Includes gating freeze and proper progress tracking.
         """
         try:
             # Check if warmup is enabled
@@ -518,6 +558,23 @@ class TradingBot:
             
             logger.info("🔥 Starting warmup training to initialize model weights...")
             
+            # Phase 2: Initialize warmup status tracking
+            self.warmup_status = {
+                'status': 'RUNNING',
+                'progress': 0.0,
+                'batches_completed': 0,
+                'total_batches': 50,
+                'elapsed_time': 0.0,
+                'estimated_remaining': 0.0,
+                'last_loss': 0.0,
+                'start_time': time.time()
+            }
+            
+            # Phase 2: Freeze gating during warmup
+            if self.gating:
+                self.gating.freeze_adaptation = True
+                logger.info("Freezing gating adaptation during warmup")
+            
             # Collect recent data for warmup
             symbol = self.config.get('trading', {}).get('symbols', ['BTCUSDT'])[0]
             timeframe = self.config.get('trading', {}).get('timeframes', ['5m'])[0]
@@ -526,22 +583,44 @@ class TradingBot:
             ohlcv_data = self.db_manager.get_ohlcv(symbol, timeframe, limit=100)
             if ohlcv_data.empty or len(ohlcv_data) < 20:
                 logger.info("Insufficient data for warmup training")
+                self.warmup_status['status'] = 'ABORTED'
                 return
             
             # Prepare warmup data samples
             warmup_samples = []
             
             # Collect several training samples
-            for i in range(min(50, len(ohlcv_data) - 3)):  # Up to 50 samples, leave room for lookahead
+            total_batches = min(50, len(ohlcv_data) - 3)
+            self.warmup_status['total_batches'] = total_batches
+            
+            log_every = 10  # Log progress every 10 batches
+            
+            for i in range(total_batches):
                 try:
                     # Use historical data slice
                     sample_data = ohlcv_data.iloc[i:i+20]
                     if len(sample_data) < 20:
                         continue
                     
-                    # Calculate indicators for this sample
+                    # Calculate indicators for this sample (use selective computation if enabled)
                     profile_enabled = self.config.get('indicators', {}).get('profile', True)
-                    indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe, profile=profile_enabled)
+                    use_selected_only = self.config.get('indicators', {}).get('use_selected_only', False)
+                    
+                    # Get active indicators if selective mode enabled
+                    active_indicators = None
+                    if use_selected_only and self.gating and self.gating.rfe_performed:
+                        active_indicators = []
+                        for feature_name, info in self.gating.rfe_selected_features.items():
+                            if feature_name.startswith('indicator.') and info['selected']:
+                                indicator_name = feature_name.split('.', 1)[1]
+                                active_indicators.append(indicator_name)
+                    
+                    indicators_result = self.collectors['indicators'].calculate_indicators(
+                        symbol, timeframe,
+                        profile=profile_enabled,
+                        use_selected_only=use_selected_only,
+                        active_indicators=active_indicators
+                    )
                     if not indicators_result:
                         continue
                     
@@ -597,12 +676,28 @@ class TradingBot:
                     
                     warmup_samples.append((features, label))
                     
+                    # Phase 2: Update progress tracking
+                    self.warmup_status['batches_completed'] = i + 1
+                    self.warmup_status['progress'] = ((i + 1) / total_batches) * 100.0
+                    
+                    elapsed = time.time() - self.warmup_status['start_time']
+                    self.warmup_status['elapsed_time'] = elapsed
+                    
+                    if i > 0:
+                        estimated_total = elapsed * (total_batches / (i + 1))
+                        self.warmup_status['estimated_remaining'] = max(0, estimated_total - elapsed)
+                    
+                    # Log progress every log_every batches
+                    if (i + 1) % log_every == 0:
+                        logger.info(f"Warmup training: batches={i + 1}/{total_batches} progress={self.warmup_status['progress']:.1f}%")
+                    
                 except Exception as e:
                     logger.debug(f"Error creating warmup sample {i}: {str(e)}")
                     continue
             
             if len(warmup_samples) < 5:
                 logger.warning("⚠️ Insufficient warmup samples created")
+                self.warmup_status['status'] = 'ABORTED'
                 return
             
             # Check label diversity
@@ -627,6 +722,11 @@ class TradingBot:
                 logger.info(f"Warmup training: batches={batches} loss: {initial_loss} -> {final_loss}")
                 logger.info(f"🚀 Warmup training completed: {batches} batches processed")
                 
+                # Phase 2: Update warmup status
+                self.warmup_status['last_loss'] = final_loss if isinstance(final_loss, (int, float)) else 0.0
+                self.warmup_status['status'] = 'COMPLETE'
+                self.warmup_status['progress'] = 100.0
+                
                 # Test prediction diversity after warmup
                 test_predictions = []
                 self.model.eval()
@@ -643,11 +743,24 @@ class TradingBot:
                     logger.info(f"✅ Prediction diversity check passed: confidence_std={diversity_check.get('confidence_std', 0):.4f}")
                 else:
                     logger.warning(f"⚠️ Prediction diversity still low after warmup: {diversity_check.get('reason', 'unknown')}")
+                    
+                # Phase 2: Unfreeze gating after warmup completion
+                if self.gating:
+                    self.gating.freeze_adaptation = False
+                    logger.info("Unfrozen gating adaptation after warmup completion")
+                    
             else:
                 logger.warning("⚠️ No warmup batches completed - model may have stuck confidence")
+                self.warmup_status['status'] = 'ABORTED'
                 
         except Exception as e:
             logger.error(f"Error in warmup training: {str(e)}")
+            # Phase 2: Mark warmup as aborted on error
+            if hasattr(self, 'warmup_status'):
+                self.warmup_status['status'] = 'ABORTED'
+            # Unfreeze gating even on error
+            if self.gating:
+                self.gating.freeze_adaptation = False
     
     def _init_data_collectors(self):
         """Initialize data collection components"""
@@ -889,6 +1002,22 @@ class TradingBot:
             try:
                 # Process any messages from web interface
                 self._process_messages()
+                
+                # Phase 2: Check for periodic RFE trigger
+                if self.gating and self.gating.rfe_performed:
+                    # Calculate recent success rate for performance-based triggering
+                    current_success_rate = self._calculate_recent_success_rate()
+                    
+                    if self.gating.should_trigger_periodic_rfe(self.config, current_success_rate):
+                        logger.info("Triggering periodic RFE...")
+                        rfe_success = self._perform_rfe_feature_selection()
+                        if rfe_success:
+                            logger.info("Periodic RFE completed successfully")
+                        else:
+                            logger.warning("Periodic RFE failed")
+                
+                # Phase 2: Log hourly performance metrics
+                self._log_hourly_performance()
                 
                 # Collect fresh data
                 data = self._collect_data()
@@ -1426,6 +1555,124 @@ class TradingBot:
         except Exception as e:
             logger.error(f"Error detecting market regime: {str(e)}")
             return 'neutral'
+    
+    def _calculate_recent_success_rate(self):
+        """
+        Calculate recent trading success rate for periodic RFE triggering.
+        
+        Returns:
+            float: Success rate (0.0-1.0) over last 20 trades
+        """
+        try:
+            if not hasattr(self, 'recent_trades'):
+                self.recent_trades = []
+            
+            # Get recent trade results from position manager or risk manager
+            # This is a simplified implementation - in practice would track actual trade outcomes
+            
+            if len(self.recent_trades) < 5:
+                return 0.5  # Default neutral success rate
+            
+            # Calculate success rate from last 20 trades
+            recent = self.recent_trades[-20:]
+            successful = sum(1 for trade in recent if trade.get('success', False))
+            success_rate = successful / len(recent)
+            
+            # Update gating performance tracking
+            if self.gating:
+                self.gating.update_performance_tracking(success_rate)
+            
+            return success_rate
+            
+        except Exception as e:
+            logger.error(f"Error calculating success rate: {str(e)}")
+            return 0.5  # Return neutral rate on error
+    
+    def _calculate_rolling_performance_metrics(self):
+        """
+        Calculate rolling performance metrics for dashboard display (Phase 2).
+        
+        Returns:
+            dict: Rolling metrics including win_rate_last_20, avg_rr_last_20, cumulative_pnl
+        """
+        try:
+            if not hasattr(self, 'recent_trades'):
+                self.recent_trades = []
+            
+            metrics = {
+                'win_rate_last_20': 0.0,
+                'avg_rr_last_20': 0.0,
+                'cumulative_pnl': 0.0,
+                'total_trades': len(self.recent_trades),
+                'trades_last_20': 0
+            }
+            
+            if len(self.recent_trades) == 0:
+                return metrics
+            
+            # Get last 20 trades
+            recent_trades = self.recent_trades[-20:]
+            metrics['trades_last_20'] = len(recent_trades)
+            
+            # Calculate win rate
+            winning_trades = sum(1 for trade in recent_trades if trade.get('pnl', 0) > 0)
+            metrics['win_rate_last_20'] = (winning_trades / len(recent_trades)) * 100 if recent_trades else 0.0
+            
+            # Calculate average risk-reward ratio
+            risk_rewards = []
+            for trade in recent_trades:
+                if trade.get('risk', 0) > 0 and trade.get('pnl', 0) != 0:
+                    rr = abs(trade['pnl']) / trade['risk']
+                    if trade['pnl'] > 0:  # Winning trade
+                        risk_rewards.append(rr)
+                    else:  # Losing trade
+                        risk_rewards.append(-rr)
+            
+            metrics['avg_rr_last_20'] = np.mean(risk_rewards) if risk_rewards else 0.0
+            
+            # Calculate cumulative PnL
+            metrics['cumulative_pnl'] = sum(trade.get('pnl', 0) for trade in self.recent_trades)
+            
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"Error calculating rolling performance metrics: {str(e)}")
+            return {
+                'win_rate_last_20': 0.0,
+                'avg_rr_last_20': 0.0,
+                'cumulative_pnl': 0.0,
+                'total_trades': 0,
+                'trades_last_20': 0
+            }
+    
+    def _log_hourly_performance(self):
+        """
+        Log performance metrics every hour (Phase 2 requirement).
+        """
+        try:
+            if not hasattr(self, 'last_hourly_log'):
+                self.last_hourly_log = time.time()
+                return
+            
+            # Check if an hour has passed
+            if time.time() - self.last_hourly_log < 3600:  # 1 hour in seconds
+                return
+            
+            # Calculate and log metrics
+            metrics = self._calculate_rolling_performance_metrics()
+            
+            logger.info("=" * 60)
+            logger.info("📊 HOURLY PERFORMANCE SUMMARY")
+            logger.info(f"Win Rate (Last 20): {metrics['win_rate_last_20']:.1f}%")
+            logger.info(f"Avg Risk/Reward (Last 20): {metrics['avg_rr_last_20']:.2f}")
+            logger.info(f"Cumulative PnL: ${metrics['cumulative_pnl']:.2f}")
+            logger.info(f"Total Trades: {metrics['total_trades']}")
+            logger.info("=" * 60)
+            
+            self.last_hourly_log = time.time()
+            
+        except Exception as e:
+            logger.error(f"Error logging hourly performance: {str(e)}")
 
 
 def _inject_config_defaults(config):
@@ -1444,6 +1691,20 @@ def _inject_config_defaults(config):
     if 'indicators' not in config:
         config['indicators'] = {}
     config['indicators'].setdefault('profile', True)
+    config['indicators'].setdefault('use_selected_only', False)
+    config['indicators'].setdefault('min_active_features', 10)
+    
+    # RFE defaults
+    if 'rfe' not in config:
+        config['rfe'] = {}
+    if 'periodic' not in config['rfe']:
+        config['rfe']['periodic'] = {}
+    config['rfe']['periodic'].setdefault('enabled', False)
+    config['rfe']['periodic'].setdefault('interval_minutes', 30)
+    
+    if 'trigger' not in config['rfe']:
+        config['rfe']['trigger'] = {}
+    config['rfe']['trigger'].setdefault('performance_drop_pct', 15)
 
 
 if __name__ == "__main__":

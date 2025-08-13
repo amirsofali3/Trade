@@ -133,61 +133,54 @@ def signals():
 
 @app.route('/api/active-features')
 def active_features():
-    """Return the status of active features and their weights with enhanced data"""
-    # Enhanced feature data with more detailed information
-    enhanced_features = {}
-    
-    # Process each feature group from data_store
-    for group_name, group_data in data_store['active_features'].items():
-        if isinstance(group_data, dict):
-            if group_name == 'indicators':
-                # Process individual indicators
-                enhanced_features[group_name] = {}
-                for indicator_name, indicator_data in group_data.items():
-                    weight = indicator_data.get('weight', 0.0)
-                    is_active = weight > 0.01  # Features with weight <= 0.01 are considered inactive
-                    
-                    # Classify indicator strength
-                    if weight <= 0.01:
-                        status = 'weak'
-                    elif weight < 0.05:
-                        status = 'moderate'
-                    else:
-                        status = 'strong'
-                    
-                    enhanced_features[group_name][indicator_name] = {
-                        'active': is_active,
-                        'weight': weight,
-                        'weight_percentage': weight * 100,
-                        'status': status,
-                        'last_value': group_data.get('last_value', 0.0),
-                        'impact_score': weight * 10,  # Scale for display
-                        'update_time': datetime.now().strftime('%H:%M:%S')
-                    }
-            else:
-                # Process other feature groups
-                weight = group_data.get('weight', 0.0)
-                is_active = weight > 0.01
-                
-                # Classify feature strength
-                if weight <= 0.01:
-                    status = 'weak'
-                elif weight < 0.05:
-                    status = 'moderate'
-                else:
-                    status = 'strong'
-                
-                enhanced_features[group_name] = {
-                    'active': is_active,
-                    'weight': weight,
-                    'weight_percentage': weight * 100,
-                    'status': status,
-                    'last_value': group_data.get('last_value', 0.0),
-                    'impact_score': weight * 10,
-                    'update_time': datetime.now().strftime('%H:%M:%S')
-                }
-    
-    return jsonify(enhanced_features)
+    """Return the status of active features and their weights with enhanced Phase 2 data"""
+    try:
+        enhanced_features = {}
+        
+        # Get feature data from bot instance if available
+        if bot_instance and bot_instance.gating:
+            active_features_data = bot_instance.gating.get_active_features()
+            
+            # Process RFE summary for counts
+            rfe_summary = bot_instance.gating.get_rfe_summary()
+            
+            # Add metadata about feature selection
+            enhanced_features['_metadata'] = {
+                'rfe_performed': bot_instance.gating.rfe_performed,
+                'total_active': rfe_summary.get('total_selected', 0),
+                'total_inactive': rfe_summary.get('total_available', 0) - rfe_summary.get('total_selected', 0),
+                'last_rfe_time': bot_instance.gating.last_rfe_time or 'Never',
+                'feature_set_version': bot_instance.gating.feature_set_version,
+                'feature_set_hash': bot_instance.gating.get_feature_set_version_hash(),
+                'strong_features': rfe_summary.get('strong', 0),
+                'medium_features': rfe_summary.get('medium', 0),
+                'weak_features': rfe_summary.get('weak', 0)
+            }
+            
+            # Calculate next possible RFE time
+            if bot_instance.gating.last_rfe_time:
+                interval_minutes = bot_instance.config.get('rfe', {}).get('periodic', {}).get('interval_minutes', 30)
+                next_rfe_time = bot_instance.gating.last_rfe_time + (interval_minutes * 60)
+                enhanced_features['_metadata']['rfe_next_possible_time'] = next_rfe_time
+            
+            # Process feature data
+            for group_name, group_data in active_features_data.items():
+                enhanced_features[group_name] = group_data
+        else:
+            # Fallback to static data if bot instance not available
+            enhanced_features = data_store['active_features'].copy()
+            enhanced_features['_metadata'] = {
+                'rfe_performed': False,
+                'total_active': 0,
+                'total_inactive': 0,
+                'last_rfe_time': 'Never',
+                'feature_set_version': 1
+            }
+        
+        return jsonify(enhanced_features)
+    except Exception as e:
+        logger.error(f"Error in /api/active-features: {str(e)}")
+        return jsonify({'error': 'Failed to retrieve active features'}), 500
 
 @app.route('/api/rfe-analysis')
 def rfe_analysis():
@@ -530,6 +523,116 @@ def model_stats():
             'model_version': '1.0.0',
             'recent_updates': [{'timestamp': None, 'type': 'error', 'version_change': 'Server error'}]
         }), 500
+
+@app.route('/api/indicator-profiling')
+def indicator_profiling():
+    """Return indicator computation profiling and statistics (Phase 2)"""
+    try:
+        profiling_data = {
+            'last_cycle': {
+                'computed': 0,
+                'skipped': 0,
+                'cache_hits': 0,
+                'total_time': 0.0,
+                'avg_time': 0.0,
+                'slowest': []
+            },
+            'optimization_enabled': False,
+            'cache_status': 'empty'
+        }
+        
+        if bot_instance and hasattr(bot_instance, 'collectors') and 'indicators' in bot_instance.collectors:
+            indicator_calc = bot_instance.collectors['indicators']
+            
+            # Get computation statistics
+            if hasattr(indicator_calc, 'computation_stats'):
+                stats = indicator_calc.get_computation_stats()
+                profiling_data['last_cycle'].update(stats)
+            
+            # Get profiling information
+            if hasattr(indicator_calc, 'last_indicator_profile'):
+                profile = indicator_calc.last_indicator_profile
+                profiling_data['last_cycle'].update({
+                    'total_time': profile.get('total_time', 0.0),
+                    'avg_time': profile.get('avg_time', 0.0),
+                    'slowest': profile.get('slowest', [])
+                })
+            
+            # Check optimization settings
+            profiling_data['optimization_enabled'] = bot_instance.config.get('indicators', {}).get('use_selected_only', False)
+            
+            # Cache status
+            cache_size = len(getattr(indicator_calc, 'indicator_cache', {}))
+            if cache_size > 0:
+                profiling_data['cache_status'] = f'{cache_size} entries'
+            else:
+                profiling_data['cache_status'] = 'empty'
+        
+        return jsonify(profiling_data)
+        
+    except Exception as e:
+        logger.error(f"Error in /api/indicator-profiling: {str(e)}")
+        return jsonify({'error': 'Failed to retrieve profiling data'}), 500
+
+@app.route('/api/warmup-status') 
+def warmup_status():
+    """Return warmup training status and progress (Phase 2)"""
+    try:
+        warmup_data = {
+            'status': 'NOT_STARTED',
+            'progress': 0.0,
+            'batches_completed': 0,
+            'total_batches': 0,
+            'elapsed_time': 0.0,
+            'estimated_remaining': 0.0,
+            'last_loss': 0.0,
+            'enabled': True
+        }
+        
+        if bot_instance:
+            # Check warmup configuration
+            warmup_data['enabled'] = bot_instance.config.get('training', {}).get('warmup_enabled', True)
+            
+            # Get warmup status from bot instance if available
+            if hasattr(bot_instance, 'warmup_status'):
+                warmup_data.update(bot_instance.warmup_status)
+            elif hasattr(bot_instance, 'learner') and bot_instance.learner:
+                # Try to get status from online learner
+                if hasattr(bot_instance.learner, 'warmup_complete'):
+                    if bot_instance.learner.warmup_complete:
+                        warmup_data['status'] = 'COMPLETE'
+                        warmup_data['progress'] = 100.0
+                    else:
+                        warmup_data['status'] = 'RUNNING'
+        
+        return jsonify(warmup_data)
+        
+    except Exception as e:
+        logger.error(f"Error in /api/warmup-status: {str(e)}")
+        return jsonify({'error': 'Failed to retrieve warmup status'}), 500
+
+@app.route('/api/rolling-performance')
+def rolling_performance():
+    """Return rolling performance metrics (Phase 2)"""
+    try:
+        performance_data = {
+            'win_rate_last_20': 0.0,
+            'avg_rr_last_20': 0.0, 
+            'cumulative_pnl': 0.0,
+            'total_trades': 0,
+            'trades_last_20': 0,
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        if bot_instance and hasattr(bot_instance, '_calculate_rolling_performance_metrics'):
+            metrics = bot_instance._calculate_rolling_performance_metrics()
+            performance_data.update(metrics)
+        
+        return jsonify(performance_data)
+        
+    except Exception as e:
+        logger.error(f"Error in /api/rolling-performance: {str(e)}")
+        return jsonify({'error': 'Failed to retrieve performance metrics'}), 500
 
 @app.route('/api/feature-selection')
 def feature_selection():
