@@ -478,14 +478,34 @@ class TradingBot:
             rfe_results = self.gating.perform_rfe_selection(aligned_features, aligned_labels)
             
             if rfe_results:
+                # Apply RFE weights and get status
+                weights_applied = self.gating.apply_rfe_weights()
+                if not weights_applied:
+                    logger.warning("Failed to apply RFE weights despite successful selection")
+                    return False
+                
                 # Get and log results
                 rfe_summary = self.gating.get_rfe_summary()
-                weights_applied = self.gating.get_rfe_weights()
+                rfe_weights = self.gating.get_rfe_weights()
                 
-                # Count weight categories
-                strong_count = sum(1 for w in weights_applied.values() if w >= 0.7)
-                medium_count = sum(1 for w in weights_applied.values() if 0.3 <= w < 0.7) 
-                weak_count = sum(1 for w in weights_applied.values() if w < 0.3)
+                # Count weight categories using tensor-safe operations
+                strong_count = medium_count = weak_count = 0
+                for group_weights in rfe_weights.values():
+                    if isinstance(group_weights, torch.Tensor):
+                        # Use tensor operations to avoid ambiguous boolean comparisons
+                        weights_np = group_weights.detach().cpu().numpy()
+                        strong_count += int(np.sum(weights_np >= 0.7))
+                        medium_count += int(np.sum((weights_np >= 0.3) & (weights_np < 0.7)))
+                        weak_count += int(np.sum(weights_np < 0.3))
+                    else:
+                        # Handle scalar weights
+                        weight_val = float(group_weights)
+                        if weight_val >= 0.7:
+                            strong_count += 1
+                        elif weight_val >= 0.3:
+                            medium_count += 1
+                        else:
+                            weak_count += 1
                 
                 logger.info(f"Applied RFE weights: strong={strong_count}, medium={medium_count}, weak={weak_count}")
                 logger.info("🚀 RFE feature selection completed!")
@@ -712,14 +732,24 @@ class TradingBot:
             gating_module=self.gating  # Pass gating module for scalar weighting
         )
         
-        # Online learner
+        # Online learner - use config.online.update_interval instead of model.update_interval
+        online_config = self.config.get('online', {})
+        update_interval_raw = online_config.get('update_interval', 60)
+        
+        # Safely cast to int to avoid TypeError
+        try:
+            update_interval = int(update_interval_raw)
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid update_interval value '{update_interval_raw}', using default 60s: {str(e)}")
+            update_interval = 60
+            
         self.learner = OnlineLearner(
             model=self.model,
             gating_module=self.gating,  # Pass gating module for feedback
             lr=model_config.get('learning_rate', 1e-4),
             buffer_size=1000,
             batch_size=32,
-            update_interval=model_config.get('update_interval', 3600),  # Update every hour
+            update_interval=update_interval,  # Use safely cast online config
             save_dir='saved_models'
         )
         
