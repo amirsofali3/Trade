@@ -21,6 +21,15 @@ class IndicatorCalculator:
         # Profiling attributes for indicator timing
         self.last_indicator_profile = {}  # Store last profiling results
         
+        # Phase 2: Optimization attributes
+        self.indicator_cache = {}  # Cache computed indicator results  
+        self.indicator_timestamps = {}  # Track last computation timestamp per indicator
+        self.computation_stats = {
+            'computed': 0,
+            'skipped': 0, 
+            'cache_hits': 0
+        }
+        
         # Define available indicators - Extended to ~100 technical indicators
         self.available_indicators = {
             # Trend indicators (15 total)
@@ -249,7 +258,8 @@ class IndicatorCalculator:
         
         logger.info("Indicator calculator initialized")
     
-    def calculate_indicators(self, symbol, timeframe, indicators=None, params=None, profile=True):
+    def calculate_indicators(self, symbol, timeframe, indicators=None, params=None, profile=True, 
+                           use_selected_only=False, active_indicators=None):
         """
         Calculate specified indicators and save to database with optional profiling.
         
@@ -259,17 +269,36 @@ class IndicatorCalculator:
             indicators: List of indicators to calculate or None for all
             params: Dictionary of parameter overrides for indicators
             profile: Whether to profile indicator computation times (default True)
+            use_selected_only: Whether to compute only selected indicators from RFE (Phase 2)
+            active_indicators: List of active indicator names from RFE selection (Phase 2)
             
         Returns:
             Dictionary with calculated indicators
         """
         try:
+            # Reset computation stats for this cycle
+            self.computation_stats = {'computed': 0, 'skipped': 0, 'cache_hits': 0}
+            
             # Get OHLCV data
             ohlcv_data = self.db_manager.get_ohlcv(symbol, timeframe)
             
             if ohlcv_data.empty:
                 logger.warning(f"No OHLCV data available for {symbol} {timeframe}")
                 return {}
+            
+            # Phase 2: Use only selected indicators if enabled
+            if use_selected_only and active_indicators:
+                indicators = active_indicators
+                logger.info(f"Using selected indicators only: {len(indicators)} of {len(self.available_indicators)} total")
+            elif not indicators:
+                indicators = list(self.available_indicators.keys())
+            
+            # Check if we can skip computation based on timestamp (Phase 2 optimization)
+            last_close_timestamp = ohlcv_data['timestamp'].iloc[-1] if 'timestamp' in ohlcv_data.columns else None
+            if self._should_skip_computation(symbol, timeframe, last_close_timestamp):
+                logger.info("Skipping indicator computation - no new data since last calculation")
+                self.computation_stats['skipped'] = len(indicators)
+                return self.indicator_cache.get(f"{symbol}_{timeframe}", {})
             
             # Use all available indicators if none specified
             if not indicators:
@@ -301,6 +330,7 @@ class IndicatorCalculator:
                     ind_params = combined_params.get(ind, {})
                     
                     ind_result = calculator(ohlcv_data, **ind_params)
+                    self.computation_stats['computed'] += 1
                     
                     # Record timing
                     ind_elapsed = time.time() - ind_start
@@ -323,6 +353,16 @@ class IndicatorCalculator:
             # Profile logging and storage
             if profile and indicator_times:
                 self._log_indicator_profile(indicator_times, profile_start)
+            
+            # Phase 2: Cache results and update timestamps
+            cache_key = f"{symbol}_{timeframe}"
+            self.indicator_cache[cache_key] = results.copy()
+            if last_close_timestamp:
+                self.indicator_timestamps[cache_key] = last_close_timestamp
+            
+            # Log computation statistics
+            stats = self.computation_stats
+            logger.info(f"Indicator stats: computed={stats['computed']} skipped={stats['skipped']} cache_hits={stats['cache_hits']}")
             
             return results
         
@@ -357,6 +397,47 @@ class IndicatorCalculator:
         # Log profile with deterministic ordering
         slowest_str = ', '.join([f"('{name}', {time:.3f})" for name, time in slowest_n])
         logger.info(f"Indicator profile: total={total_indicators} total_time={total_time:.3f}s avg_time={avg_time:.4f}s slowest=[{slowest_str}]")
+    
+    # Phase 2: Optimization methods
+    
+    def _should_skip_computation(self, symbol, timeframe, current_timestamp):
+        """
+        Check if indicator computation should be skipped based on timestamp.
+        
+        Args:
+            symbol: Trading symbol
+            timeframe: Timeframe
+            current_timestamp: Current latest timestamp
+            
+        Returns:
+            bool: True if computation should be skipped
+        """
+        if not current_timestamp:
+            return False
+        
+        cache_key = f"{symbol}_{timeframe}"
+        last_timestamp = self.indicator_timestamps.get(cache_key)
+        
+        if not last_timestamp:
+            return False
+        
+        # Skip if timestamp hasn't changed (no new data)
+        return current_timestamp == last_timestamp
+    
+    def get_computation_stats(self):
+        """
+        Get current computation statistics.
+        
+        Returns:
+            dict: Statistics with computed, skipped, cache_hits counts
+        """
+        return self.computation_stats.copy()
+    
+    def reset_cache(self):
+        """Reset indicator cache and timestamps."""
+        self.indicator_cache.clear()
+        self.indicator_timestamps.clear()
+        logger.info("Indicator cache reset")
     
     # Indicator calculation methods
     def _calculate_sma(self, ohlcv, timeperiod=20):

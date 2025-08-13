@@ -408,10 +408,28 @@ class TradingBot:
             valid_ohlcv = ohlcv_data.iloc[:-lookahead]  # Remove last samples to match labels
             features_by_group['ohlcv'] = valid_ohlcv.set_index('timestamp') if 'timestamp' in valid_ohlcv.columns else valid_ohlcv
             
-            # Calculate indicators
+            # Calculate indicators (Phase 2: Support selective computation)
             logger.info("📈 Calculating technical indicators...")
             profile_enabled = self.config.get('indicators', {}).get('profile', True)
-            indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe, profile=profile_enabled)
+            use_selected_only = self.config.get('indicators', {}).get('use_selected_only', False)
+            
+            # Get active indicators if RFE has been performed and selective mode is enabled
+            active_indicators = None
+            if use_selected_only and self.gating and self.gating.rfe_performed:
+                # Extract indicator names from RFE selected features
+                active_indicators = []
+                for feature_name, info in self.gating.rfe_selected_features.items():
+                    if feature_name.startswith('indicator.') and info['selected']:
+                        indicator_name = feature_name.split('.', 1)[1]
+                        active_indicators.append(indicator_name)
+                logger.info(f"Using {len(active_indicators)} selected indicators from RFE")
+            
+            indicators_result = self.collectors['indicators'].calculate_indicators(
+                symbol, timeframe, 
+                profile=profile_enabled,
+                use_selected_only=use_selected_only,
+                active_indicators=active_indicators
+            )
             
             if indicators_result:
                 # Convert indicators to timestamped DataFrame - fix fragmentation
@@ -492,10 +510,25 @@ class TradingBot:
                 # Use unified RFE summary instead of duplicate counting
                 rfe_summary = self.gating.get_rfe_summary()
                 
+                # Phase 2: Build active feature masks after successful RFE
+                min_active_features = self.config.get('indicators', {}).get('min_active_features', 10)
+                active_masks = self.gating.build_active_feature_masks(min_active_features)
+                
+                total_active = sum(np.sum(mask) for mask in active_masks.values()) if active_masks else 0
+                logger.info(f"Built active feature masks: {total_active} total active features")
+                
+                # Save RFE summary with versioning
+                self.gating.save_rfe_summary_with_version()
+                
                 # Log using unified summary data (replaces duplicate counting)
                 logger.info(f"Applied RFE weights: strong={rfe_summary['strong']}, medium={rfe_summary['medium']}, weak={rfe_summary['weak']}")
                 logger.info("🚀 RFE feature selection completed!")
                 logger.info(f"Selected {rfe_summary['total_selected']} features out of {rfe_summary.get('total_available', 0)} available")
+                
+                # Enable use_selected_only for future indicator calculations
+                if not self.config.get('indicators', {}).get('use_selected_only', False):
+                    self.config['indicators']['use_selected_only'] = True
+                    logger.info("Enabled selective indicator computation for future cycles")
                 
                 return True
             else:
@@ -889,6 +922,19 @@ class TradingBot:
             try:
                 # Process any messages from web interface
                 self._process_messages()
+                
+                # Phase 2: Check for periodic RFE trigger
+                if self.gating and self.gating.rfe_performed:
+                    # Calculate recent success rate for performance-based triggering
+                    current_success_rate = self._calculate_recent_success_rate()
+                    
+                    if self.gating.should_trigger_periodic_rfe(self.config, current_success_rate):
+                        logger.info("Triggering periodic RFE...")
+                        rfe_success = self._perform_rfe_feature_selection()
+                        if rfe_success:
+                            logger.info("Periodic RFE completed successfully")
+                        else:
+                            logger.warning("Periodic RFE failed")
                 
                 # Collect fresh data
                 data = self._collect_data()
@@ -1426,6 +1472,38 @@ class TradingBot:
         except Exception as e:
             logger.error(f"Error detecting market regime: {str(e)}")
             return 'neutral'
+    
+    def _calculate_recent_success_rate(self):
+        """
+        Calculate recent trading success rate for periodic RFE triggering.
+        
+        Returns:
+            float: Success rate (0.0-1.0) over last 20 trades
+        """
+        try:
+            if not hasattr(self, 'recent_trades'):
+                self.recent_trades = []
+            
+            # Get recent trade results from position manager or risk manager
+            # This is a simplified implementation - in practice would track actual trade outcomes
+            
+            if len(self.recent_trades) < 5:
+                return 0.5  # Default neutral success rate
+            
+            # Calculate success rate from last 20 trades
+            recent = self.recent_trades[-20:]
+            successful = sum(1 for trade in recent if trade.get('success', False))
+            success_rate = successful / len(recent)
+            
+            # Update gating performance tracking
+            if self.gating:
+                self.gating.update_performance_tracking(success_rate)
+            
+            return success_rate
+            
+        except Exception as e:
+            logger.error(f"Error calculating success rate: {str(e)}")
+            return 0.5  # Return neutral rate on error
 
 
 def _inject_config_defaults(config):
@@ -1444,6 +1522,20 @@ def _inject_config_defaults(config):
     if 'indicators' not in config:
         config['indicators'] = {}
     config['indicators'].setdefault('profile', True)
+    config['indicators'].setdefault('use_selected_only', False)
+    config['indicators'].setdefault('min_active_features', 10)
+    
+    # RFE defaults
+    if 'rfe' not in config:
+        config['rfe'] = {}
+    if 'periodic' not in config['rfe']:
+        config['rfe']['periodic'] = {}
+    config['rfe']['periodic'].setdefault('enabled', False)
+    config['rfe']['periodic'].setdefault('interval_minutes', 30)
+    
+    if 'trigger' not in config['rfe']:
+        config['rfe']['trigger'] = {}
+    config['rfe']['trigger'].setdefault('performance_drop_pct', 15)
 
 
 if __name__ == "__main__":
