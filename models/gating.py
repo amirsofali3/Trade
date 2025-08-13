@@ -309,20 +309,20 @@ class FeatureGatingModule(nn.Module):
             logger.info(f"Selected {len(selected_indices)} out of {len(feature_names)} features:")
             
             for i, (feature_name, rank) in enumerate(zip(feature_names, rankings)):
-                self.rfe_feature_rankings[feature_name] = rank
+                self.rfe_feature_rankings[feature_name] = int(rank)  # Convert to native int
                 is_selected = i in selected_indices
                 
                 if is_selected:
                     self.rfe_selected_features[feature_name] = {
-                        'rank': rank,
-                        'importance': rf_estimator.feature_importances_[i] if hasattr(rf_estimator, 'feature_importances_') else 0.0,
+                        'rank': int(rank),  # Convert to native int
+                        'importance': float(rf_estimator.feature_importances_[i]) if hasattr(rf_estimator, 'feature_importances_') else 0.0,
                         'selected': True
                     }
                     logger.info(f"  ✅ {feature_name} (rank: {rank})")
                 else:
                     # Still track unselected features but mark them
                     self.rfe_selected_features[feature_name] = {
-                        'rank': rank,
+                        'rank': int(rank),  # Convert to native int
                         'importance': 0.01,  # Low importance for unselected
                         'selected': False
                     }
@@ -764,9 +764,9 @@ class FeatureGatingModule(nn.Module):
                 for name, info in self.rfe_selected_features.items():
                     ranked_features.append({
                         'name': name,
-                        'rank': info['rank'],
-                        'importance': info['importance'],
-                        'selected': info['selected']
+                        'rank': int(info['rank']),  # Convert to native int
+                        'importance': float(info['importance']),  # Convert to native float
+                        'selected': bool(info['selected'])  # Convert to native bool
                     })
                 
                 # Sort by rank (lower is better)
@@ -1292,22 +1292,38 @@ class FeatureGatingModule(nn.Module):
             # No RFE performed, return neutral weight
             return 1.0
         
-        # Get RFE weights for this group
-        rfe_weights = self.get_rfe_weights()
+        # Get all selected features categorized
+        all_selected = [(name, info) for name, info in self.rfe_selected_features.items() if info['selected']]
+        all_selected.sort(key=lambda x: x[1]['importance'], reverse=True)
+        
+        n_selected = len(all_selected)
+        strong_count = min(self.rfe_n_features, n_selected)
+        medium_count = min(strong_count * 2, n_selected - strong_count)
+        
+        strong_features = set(item[0] for item in all_selected[:strong_count])
+        medium_features = set(item[0] for item in all_selected[strong_count:strong_count + medium_count])
         
         if group_name == 'indicator':
-            # For indicators, average the weights of selected features
-            indicator_weights = [w for name, w in rfe_weights.items() if name.startswith('indicator.')]
+            # For indicators, average the weights of selected features in this group
+            indicator_weights = []
+            for name, info in self.rfe_selected_features.items():
+                if name.startswith('indicator.') and info['selected']:
+                    if name in strong_features:
+                        indicator_weights.append(0.8)  # Strong weight
+                    elif name in medium_features:
+                        indicator_weights.append(0.5)  # Medium weight
+                    else:
+                        indicator_weights.append(float(self.min_weight))
+            
             if indicator_weights:
-                avg_weight = np.mean(indicator_weights)
-                # Ensure minimum weight
-                return max(avg_weight, self.min_weight)
+                return float(np.mean(indicator_weights))
             else:
-                return self.min_weight
+                return float(self.min_weight)
         else:
-            # For other groups, use direct mapping
-            if group_name in rfe_weights:
-                return max(rfe_weights[group_name], self.min_weight)
+            # For other groups, use direct category mapping
+            if group_name in strong_features:
+                return 0.8  # Strong weight
+            elif group_name in medium_features:
+                return 0.5  # Medium weight
             else:
-                # Group not in RFE results, use minimum weight
-                return self.min_weight
+                return float(self.min_weight)  # Weak weight
