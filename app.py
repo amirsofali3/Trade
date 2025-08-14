@@ -121,8 +121,85 @@ def portfolio():
 
 @app.route('/api/performance')
 def performance():
-    """Return performance metrics"""
-    return jsonify(data_store['trading_data']['performance'])
+    """Return enhanced performance metrics with adaptive signaling stats"""
+    try:
+        # Get base performance data
+        base_performance = data_store['trading_data']['performance'].copy()
+        
+        # Add adaptive signaling performance metrics
+        if bot_instance and hasattr(bot_instance, 'signal_generator'):
+            signal_gen = bot_instance.signal_generator
+            
+            # Get recent signal performance
+            if hasattr(signal_gen, 'recent_signals'):
+                recent_signals = signal_gen.recent_signals[-50:]  # Last 50 signals
+                
+                if recent_signals:
+                    successful_signals = [s for s in recent_signals if s.get('successful', False)]
+                    total_signals = len(recent_signals)
+                    successful_count = len(successful_signals)
+                    
+                    # Signal success metrics
+                    base_performance['adaptive_signaling'] = {
+                        'total_signals_tracked': total_signals,
+                        'successful_signals': successful_count,
+                        'success_rate': (successful_count / total_signals) * 100 if total_signals > 0 else 0,
+                        'average_confidence': sum(s.get('confidence', 0) for s in recent_signals) / total_signals if total_signals > 0 else 0,
+                        'average_volatility': sum(s.get('volatility_pct', 0) for s in recent_signals) / total_signals if total_signals > 0 else 0,
+                    }
+                    
+                    # Calculate profit metrics if available
+                    profitable_signals = [s for s in successful_signals if s.get('profit_loss', 0) > 0]
+                    if profitable_signals:
+                        total_profit = sum(s.get('profit_loss', 0) for s in profitable_signals)
+                        avg_profit = total_profit / len(profitable_signals)
+                        base_performance['adaptive_signaling']['total_tracked_profit'] = total_profit
+                        base_performance['adaptive_signaling']['average_profit_per_signal'] = avg_profit
+                    
+                    # Volatility-based performance breakdown
+                    high_vol_signals = [s for s in recent_signals if s.get('volatility_pct', 0) > 0.5]
+                    low_vol_signals = [s for s in recent_signals if s.get('volatility_pct', 0) < 0.25]
+                    
+                    base_performance['adaptive_signaling']['high_volatility_performance'] = {
+                        'count': len(high_vol_signals),
+                        'success_rate': (len([s for s in high_vol_signals if s.get('successful', False)]) / len(high_vol_signals) * 100) if high_vol_signals else 0
+                    }
+                    
+                    base_performance['adaptive_signaling']['low_volatility_performance'] = {
+                        'count': len(low_vol_signals),
+                        'success_rate': (len([s for s in low_vol_signals if s.get('successful', False)]) / len(low_vol_signals) * 100) if low_vol_signals else 0
+                    }
+        
+        # Add inference scheduler performance
+        if bot_instance and hasattr(bot_instance, 'inference_stats'):
+            inference_stats = bot_instance.inference_stats
+            base_performance['inference_scheduler'] = {
+                'total_inferences': inference_stats.get('total_inferences', 0),
+                'success_rate': (inference_stats.get('successful_inferences', 0) / max(1, inference_stats.get('total_inferences', 1))) * 100,
+                'average_inference_time': inference_stats.get('avg_inference_time', 0),
+                'scheduler_active': getattr(bot_instance, 'inference_scheduler_running', False)
+            }
+        
+        # Add pretraining performance if available
+        if bot_instance and hasattr(bot_instance, 'pretrain_stats'):
+            pretrain_stats = bot_instance.pretrain_stats
+            if pretrain_stats.get('status') == 'COMPLETED':
+                base_performance['offline_pretraining'] = {
+                    'completed': True,
+                    'epochs_completed': pretrain_stats.get('epochs_completed', 0),
+                    'total_samples': pretrain_stats.get('total_samples', 0),
+                    'class_balance_improvement': pretrain_stats.get('class_balance_improvement', 0),
+                    'improvement_percentage': pretrain_stats.get('improvement_percentage', 0),
+                    'final_loss': pretrain_stats.get('loss_history', [0])[-1] if pretrain_stats.get('loss_history') else 0,
+                    'successfully_improved_balance': pretrain_stats.get('successfully_improved_balance', False)
+                }
+        
+        return jsonify(base_performance)
+        
+    except Exception as e:
+        logger.error(f"Error in /api/performance: {str(e)}")
+        # Fallback to basic performance data
+        return jsonify(data_store['trading_data']['performance'])
 
 @app.route('/api/signals')
 def signals():
@@ -169,11 +246,14 @@ def active_features():
                     'total_inactive': rfe_summary.get('total_available', 0) - rfe_summary.get('total_selected', 0),
                     'missing_selected': missing_selected,
                     'substituted_features': substituted_features,
-                    'last_rfe_time': str(last_rfe_time) if last_rfe_time else 'Never',
-                    'feature_set_version': int(feature_set_version) if isinstance(feature_set_version, (int, float)) else 1,
-                    'strong_features': rfe_summary.get('strong', 0),
-                    'medium_features': rfe_summary.get('medium', 0),
-                    'weak_features': rfe_summary.get('weak', 0)
+                    'substitution_count': len(substituted_features),
+                    'feature_set_version': feature_set_version,
+                    'last_rfe_time': last_rfe_time.isoformat() if last_rfe_time else None,
+                    'selection_summary': {
+                        'strong': rfe_summary.get('strong', 0),
+                        'medium': rfe_summary.get('medium', 0), 
+                        'weak': rfe_summary.get('weak', 0)
+                    }
                 }
             except Exception as metadata_error:
                 logger.warning(f"Error building metadata: {metadata_error}")

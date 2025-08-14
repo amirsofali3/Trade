@@ -499,3 +499,6 @@
 2025-08-13 00:06:15,033 - Main - INFO - Initializing components...
 2025-08-13 00:06:15,053 - DBManager - ERROR - Error creating database tables: (pymysql.err.OperationalError) (2003, "Can't connect to MySQL server on 'localhost' ([Errno 111] Connection refused)")
 (Background on this error at: https://sqlalche.me/e/20/e3q8)
+2025-08-14 12:17:37,753 - Gating - INFO - Initialized Enhanced FeatureGatingModule with 1 feature groups
+2025-08-14 12:17:37,753 - Gating - INFO - Min weight for weak features: 0.01, Adaptation rate: 0.1
+2025-08-14 12:17:37,753 - Gating - INFO - RFE enabled: True, Target features: 15
