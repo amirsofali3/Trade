@@ -417,24 +417,31 @@ class TradingBot:
             active_indicators = None
             if use_selected_only and self.gating and self.gating.rfe_performed:
                 # Extract indicator names from RFE selected features
-                active_indicators = []
-                for feature_name, info in self.gating.rfe_selected_features.items():
-                    if feature_name.startswith('indicator.') and info['selected']:
-                        indicator_name = feature_name.split('.', 1)[1]
-                        active_indicators.append(indicator_name)
-                logger.info(f"Using {len(active_indicators)} selected indicators from RFE")
+                # Get selected indicator features and resolve to base indicators
+                selected_features = [name for name, info in self.gating.rfe_selected_features.items() 
+                                   if name.startswith('indicator.') and info['selected']]
+                
+                # Use gating module to resolve features to base indicators
+                base_indicators = self.gating._resolve_indicator_features(selected_features)
+                active_indicators = list(base_indicators)
+                
+                logger.info(f"Using {len(active_indicators)} base indicators from {len(selected_features)} selected features")
             
             indicators_result = self.collectors['indicators'].calculate_indicators(
                 symbol, timeframe, 
                 profile=profile_enabled,
                 use_selected_only=use_selected_only,
-                active_indicators=active_indicators
+                active_indicators=active_indicators,
+                config=self.config
             )
             
             if indicators_result:
+                # Expand composite indicators into individual features  
+                expanded_indicators = self._expand_indicator_results(indicators_result)
+                
                 # Convert indicators to timestamped DataFrame - fix fragmentation
                 indicator_data = {}
-                for name, values in indicators_result.items():
+                for name, values in expanded_indicators.items():
                     if isinstance(values, list) and len(values) > 0:
                         # Align indicators with OHLCV timestamps
                         if len(values) == len(ohlcv_data):
@@ -503,12 +510,9 @@ class TradingBot:
                     logger.warning("Failed to apply RFE weights despite successful selection")
                     return False
                 
-                # Get and log results
+                # Get and log results - use unified RFE summary only
                 rfe_summary = self.gating.get_rfe_summary()
                 rfe_weights = self.gating.get_rfe_weights()
-                
-                # Use unified RFE summary instead of duplicate counting
-                rfe_summary = self.gating.get_rfe_summary()
                 
                 # Phase 2: Build active feature masks after successful RFE
                 min_active_features = self.config.get('indicators', {}).get('min_active_features', 10)
@@ -544,6 +548,32 @@ class TradingBot:
         except Exception as e:
             logger.error(f"Error in RFE feature selection: {str(e)}")
             return False
+    
+    def _expand_indicator_results(self, indicators_result):
+        """
+        Expand composite indicator results into individual features.
+        
+        For example, 'ichimoku' returns {'chikou': [...], 'tenkan_sen': [...], ...}
+        This method flattens these into separate indicators.
+        
+        Args:
+            indicators_result: Dictionary of indicator results from IndicatorCalculator
+            
+        Returns:
+            dict: Flattened dictionary with all indicator features
+        """
+        expanded = {}
+        
+        for indicator_name, result in indicators_result.items():
+            if isinstance(result, dict):
+                # Composite indicator - expand its components
+                for component_name, values in result.items():
+                    expanded[component_name] = values
+            else:
+                # Simple indicator - use as-is
+                expanded[indicator_name] = result
+        
+        return expanded
     
     def _perform_warmup_training(self):
         """
@@ -609,20 +639,26 @@ class TradingBot:
                     # Get active indicators if selective mode enabled
                     active_indicators = None
                     if use_selected_only and self.gating and self.gating.rfe_performed:
-                        active_indicators = []
-                        for feature_name, info in self.gating.rfe_selected_features.items():
-                            if feature_name.startswith('indicator.') and info['selected']:
-                                indicator_name = feature_name.split('.', 1)[1]
-                                active_indicators.append(indicator_name)
+                        # Get selected indicator features and resolve to base indicators
+                        selected_features = [name for name, info in self.gating.rfe_selected_features.items() 
+                                           if name.startswith('indicator.') and info['selected']]
+                        
+                        # Use gating module to resolve features to base indicators
+                        base_indicators = self.gating._resolve_indicator_features(selected_features)
+                        active_indicators = list(base_indicators)
                     
                     indicators_result = self.collectors['indicators'].calculate_indicators(
                         symbol, timeframe,
                         profile=profile_enabled,
                         use_selected_only=use_selected_only,
-                        active_indicators=active_indicators
+                        active_indicators=active_indicators,
+                        config=self.config
                     )
                     if not indicators_result:
                         continue
+                    
+                    # Expand composite indicators into individual features
+                    expanded_indicators = self._expand_indicator_results(indicators_result)
                     
                     # Transform features
                     features = {}
@@ -638,7 +674,7 @@ class TradingBot:
                     # Indicator features (sample from available)
                     try:
                         sample_indicators = {}
-                        for name, values in indicators_result.items():
+                        for name, values in expanded_indicators.items():
                             if isinstance(values, list) and len(values) > i:
                                 # Take a window around this sample
                                 start_idx = max(0, i - 10)
@@ -1336,8 +1372,11 @@ class TradingBot:
         indicators = {}
         if not ohlcv_data.empty:
             profile_enabled = self.config.get('indicators', {}).get('profile', True)
-            indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe, profile=profile_enabled)
-            indicators = {name: values[-20:] if len(values) > 20 else values for name, values in indicators_result.items()}
+            indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe, profile=profile_enabled, config=self.config)
+            
+            # Expand composite indicators into individual features
+            expanded_indicators = self._expand_indicator_results(indicators_result)
+            indicators = {name: values[-20:] if len(values) > 20 else values for name, values in expanded_indicators.items()}
         
         # Get latest sentiment
         sentiment = self.db_manager.get_latest_sentiment()
