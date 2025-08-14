@@ -843,6 +843,62 @@ def inference_stats():
         logger.error(f"Error in /api/inference-stats: {str(e)}")
         return jsonify({'error': 'Failed to retrieve inference statistics'}), 500
 
+@app.route('/api/pretrain-stats')
+def pretrain_stats():
+    """Return offline pretraining statistics"""
+    try:
+        if not bot_instance:
+            return jsonify({
+                'error': 'Bot instance not available'
+            }), 503
+        
+        pretrain_stats = bot_instance.pretrain_stats.copy()
+        
+        # Calculate derived metrics
+        if pretrain_stats.get('start_time') and pretrain_stats.get('end_time'):
+            from datetime import datetime
+            start = datetime.fromisoformat(pretrain_stats['start_time']) if isinstance(pretrain_stats['start_time'], str) else pretrain_stats['start_time']
+            end = datetime.fromisoformat(pretrain_stats['end_time']) if isinstance(pretrain_stats['end_time'], str) else pretrain_stats['end_time']
+            pretrain_stats['duration_seconds'] = (end - start).total_seconds()
+        
+        # Calculate class balance improvement
+        initial_balance = pretrain_stats.get('initial_class_balance', {})
+        final_balance = pretrain_stats.get('final_class_balance', {})
+        
+        if initial_balance and final_balance:
+            def calc_imbalance_ratio(balance):
+                percentages = [info['percentage'] for info in balance.values()]
+                if not percentages:
+                    return 0.0
+                max_pct = max(percentages)
+                min_pct = min(percentages)
+                return max_pct / min_pct if min_pct > 0 else float('inf')
+            
+            initial_imbalance = calc_imbalance_ratio(initial_balance)
+            final_imbalance = calc_imbalance_ratio(final_balance)
+            pretrain_stats['class_balance_improvement'] = initial_imbalance - final_imbalance
+            pretrain_stats['improvement_percentage'] = ((initial_imbalance - final_imbalance) / initial_imbalance * 100) if initial_imbalance > 0 else 0.0
+        
+        # Convert datetime objects to ISO strings for JSON serialization
+        if pretrain_stats.get('start_time') and not isinstance(pretrain_stats['start_time'], str):
+            pretrain_stats['start_time'] = pretrain_stats['start_time'].isoformat()
+        if pretrain_stats.get('end_time') and not isinstance(pretrain_stats['end_time'], str):
+            pretrain_stats['end_time'] = pretrain_stats['end_time'].isoformat()
+        
+        # Additional metrics
+        pretrain_stats['enabled'] = bot_instance.pretraining_enabled
+        pretrain_stats['samples_per_epoch'] = pretrain_stats.get('total_samples', 0) // max(1, pretrain_stats.get('epochs_completed', 1))
+        
+        # Check if pretraining improved class balance
+        improved_balance = pretrain_stats.get('class_balance_improvement', 0) > 0
+        pretrain_stats['successfully_improved_balance'] = improved_balance
+        
+        return jsonify(pretrain_stats)
+        
+    except Exception as e:
+        logger.error(f"Error in /api/pretrain-stats: {str(e)}")
+        return jsonify({'error': 'Failed to retrieve pretraining statistics'}), 500
+
 @app.route('/api/rolling-performance')
 def rolling_performance():
     """Return rolling performance metrics (Phase 2)"""
