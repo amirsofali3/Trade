@@ -182,6 +182,124 @@ def active_features():
         logger.error(f"Error in /api/active-features: {str(e)}")
         return jsonify({'error': 'Failed to retrieve active features'}), 500
 
+@app.route('/api/health')
+def health():
+    """Return consolidated health status for active features vs selected, missing indicators, imbalance metrics"""
+    try:
+        health_status = {
+            'status': 'healthy',
+            'timestamp': datetime.now().isoformat(),
+            'feature_integrity': {},
+            'indicator_health': {},
+            'class_distribution': {},
+            'warnings': [],
+            'errors': []
+        }
+        
+        if bot_instance and bot_instance.gating:
+            # Feature mask integrity
+            rfe_summary = bot_instance.gating.get_rfe_summary()
+            active_features_data = bot_instance.gating.get_active_features()
+            
+            # Count active features
+            total_active = 0
+            missing_indicators = []
+            
+            if 'indicators' in active_features_data:
+                total_active = sum(1 for indicator_data in active_features_data['indicators'].values() 
+                                 if indicator_data.get('active', False))
+                
+                # Check for missing indicators
+                for indicator_name, indicator_data in active_features_data['indicators'].items():
+                    if indicator_data.get('rfe_selected', False) and not indicator_data.get('active', False):
+                        missing_indicators.append(indicator_name)
+            
+            health_status['feature_integrity'] = {
+                'total_selected': rfe_summary.get('total_selected', 0),
+                'total_active': total_active,
+                'missing_selected': missing_indicators,
+                'substituted_features': [],  # TODO: implement substitution tracking
+                'feature_set_version': bot_instance.gating.feature_set_version,
+                'mask_alignment_ok': len(missing_indicators) == 0
+            }
+            
+            # Indicator health
+            if hasattr(bot_instance, 'collectors') and 'indicators' in bot_instance.collectors:
+                indicator_calc = bot_instance.collectors['indicators']
+                stats = indicator_calc.get_computation_stats()
+                
+                health_status['indicator_health'] = {
+                    'cache_hits': stats.get('cache_hits', 0),
+                    'computed': stats.get('computed', 0),
+                    'skipped': stats.get('skipped', 0),
+                    'cache_effective': stats.get('cache_hits', 0) > 0,
+                    'missing_implementations': missing_indicators
+                }
+                
+                if stats.get('cache_hits', 0) == 0 and stats.get('skipped', 0) == 0:
+                    health_status['warnings'].append("Cache system ineffective - always recomputing indicators")
+            
+            # Class distribution (if learner available)
+            if hasattr(bot_instance, 'learner') and bot_instance.learner:
+                # Get recent label distribution from experience buffer
+                if hasattr(bot_instance.learner, 'experience_buffer'):
+                    labels = bot_instance.learner.experience_buffer.get('labels', [])
+                    if labels:
+                        label_counts = {}
+                        for label in labels[-1000:]:  # Last 1000 samples
+                            if isinstance(label, (list, np.ndarray)):
+                                # Convert one-hot or multi-class to single value
+                                label_val = np.argmax(label) if len(label) > 1 else label[0]
+                            else:
+                                label_val = label
+                            
+                            label_name = ['BUY', 'SELL', 'HOLD'][int(label_val)] if int(label_val) < 3 else f'CLASS_{int(label_val)}'
+                            label_counts[label_name] = label_counts.get(label_name, 0) + 1
+                        
+                        total_samples = sum(label_counts.values())
+                        if total_samples > 0:
+                            health_status['class_distribution'] = {
+                                'counts': label_counts,
+                                'percentages': {k: (v/total_samples)*100 for k, v in label_counts.items()},
+                                'total_samples': total_samples,
+                                'imbalanced': False
+                            }
+                            
+                            # Check for severe imbalance
+                            max_count = max(label_counts.values())
+                            min_count = min(label_counts.values())
+                            imbalance_ratio = max_count / min_count if min_count > 0 else float('inf')
+                            
+                            if imbalance_ratio > 10:  # 10:1 ratio threshold
+                                health_status['class_distribution']['imbalanced'] = True
+                                health_status['warnings'].append(f"Severe class imbalance detected (ratio: {imbalance_ratio:.1f}:1)")
+            
+            # Add warnings for detected issues
+            if missing_indicators:
+                health_status['warnings'].append(f"Missing implementations for selected indicators: {missing_indicators}")
+            
+            if rfe_summary.get('total_selected', 0) != total_active:
+                health_status['warnings'].append(f"Active feature mask mismatch: selected={rfe_summary.get('total_selected', 0)} vs active={total_active}")
+        
+        else:
+            health_status['status'] = 'unavailable'
+            health_status['errors'].append("Bot instance not available")
+        
+        # Overall status determination (but preserve 'unavailable' status)
+        if health_status['status'] != 'unavailable' and health_status['errors']:
+            health_status['status'] = 'error'
+        elif health_status['status'] != 'unavailable' and health_status['warnings']:
+            health_status['status'] = 'warning'
+        
+        return jsonify(health_status)
+    except Exception as e:
+        logger.error(f"Error in /api/health: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'timestamp': datetime.now().isoformat(),
+            'errors': [f"Health check failed: {str(e)}"]
+        }), 500
+
 @app.route('/api/rfe-analysis')
 def rfe_analysis():
     """Return detailed RFE analysis results"""

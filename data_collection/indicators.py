@@ -30,6 +30,10 @@ class IndicatorCalculator:
             'cache_hits': 0
         }
         
+        # Cycle tracking for configurable full refresh
+        self.computation_cycle_count = {}  # Track cycles per symbol/timeframe
+        self.last_full_refresh = {}  # Track last full refresh time per symbol/timeframe
+        
         # Define available indicators - Extended to ~100 technical indicators
         self.available_indicators = {
             # Trend indicators (15 total)
@@ -259,7 +263,7 @@ class IndicatorCalculator:
         logger.info("Indicator calculator initialized")
     
     def calculate_indicators(self, symbol, timeframe, indicators=None, params=None, profile=True, 
-                           use_selected_only=False, active_indicators=None):
+                           use_selected_only=False, active_indicators=None, config=None):
         """
         Calculate specified indicators and save to database with optional profiling.
         
@@ -295,10 +299,16 @@ class IndicatorCalculator:
             
             # Check if we can skip computation based on timestamp (Phase 2 optimization)
             last_close_timestamp = ohlcv_data['timestamp'].iloc[-1] if 'timestamp' in ohlcv_data.columns else None
-            if self._should_skip_computation(symbol, timeframe, last_close_timestamp):
+            
+            # Check if full refresh should be forced based on cycle count
+            force_full_refresh = config and self._should_force_full_refresh(symbol, timeframe, config)
+            
+            if not force_full_refresh and self._should_skip_computation(symbol, timeframe, last_close_timestamp):
                 logger.info("Skipping indicator computation - no new data since last calculation")
-                self.computation_stats['skipped'] = len(indicators)
-                return self.indicator_cache.get(f"{symbol}_{timeframe}", {})
+                cached_results = self.indicator_cache.get(f"{symbol}_{timeframe}", {})
+                self.computation_stats['skipped'] = len(indicators) if indicators else 0
+                self.computation_stats['cache_hits'] = len(cached_results)
+                return cached_results
             
             # Use all available indicators if none specified
             if not indicators:
@@ -399,6 +409,35 @@ class IndicatorCalculator:
         logger.info(f"Indicator profile: total={total_indicators} total_time={total_time:.3f}s avg_time={avg_time:.4f}s slowest=[{slowest_str}]")
     
     # Phase 2: Optimization methods
+    
+    def _should_force_full_refresh(self, symbol, timeframe, config):
+        """
+        Check if a full refresh should be forced based on cycle count.
+        
+        Args:
+            symbol: Trading symbol
+            timeframe: Timeframe 
+            config: Configuration dictionary
+            
+        Returns:
+            bool: True if full refresh should be forced
+        """
+        full_refresh_cycles = config.get('indicators', {}).get('full_refresh_every_n_cycles', 60)
+        
+        # If set to 0, full refresh is disabled
+        if full_refresh_cycles <= 0:
+            return False
+            
+        cache_key = f"{symbol}_{timeframe}"
+        current_cycle = self.computation_cycle_count.get(cache_key, 0) + 1
+        self.computation_cycle_count[cache_key] = current_cycle
+        
+        # Force full refresh every N cycles
+        if current_cycle % full_refresh_cycles == 0:
+            logger.info(f"Forcing full indicator refresh after {current_cycle} cycles (every {full_refresh_cycles} cycles)")
+            return True
+            
+        return False
     
     def _should_skip_computation(self, symbol, timeframe, current_timestamp):
         """

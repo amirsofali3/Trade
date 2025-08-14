@@ -428,7 +428,8 @@ class TradingBot:
                 symbol, timeframe, 
                 profile=profile_enabled,
                 use_selected_only=use_selected_only,
-                active_indicators=active_indicators
+                active_indicators=active_indicators,
+                config=self.config
             )
             
             if indicators_result:
@@ -503,12 +504,9 @@ class TradingBot:
                     logger.warning("Failed to apply RFE weights despite successful selection")
                     return False
                 
-                # Get and log results
+                # Get and log results - use unified RFE summary only
                 rfe_summary = self.gating.get_rfe_summary()
                 rfe_weights = self.gating.get_rfe_weights()
-                
-                # Use unified RFE summary instead of duplicate counting
-                rfe_summary = self.gating.get_rfe_summary()
                 
                 # Phase 2: Build active feature masks after successful RFE
                 min_active_features = self.config.get('indicators', {}).get('min_active_features', 10)
@@ -619,7 +617,8 @@ class TradingBot:
                         symbol, timeframe,
                         profile=profile_enabled,
                         use_selected_only=use_selected_only,
-                        active_indicators=active_indicators
+                        active_indicators=active_indicators,
+                        config=self.config
                     )
                     if not indicators_result:
                         continue
@@ -1336,7 +1335,7 @@ class TradingBot:
         indicators = {}
         if not ohlcv_data.empty:
             profile_enabled = self.config.get('indicators', {}).get('profile', True)
-            indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe, profile=profile_enabled)
+            indicators_result = self.collectors['indicators'].calculate_indicators(symbol, timeframe, profile=profile_enabled, config=self.config)
             indicators = {name: values[-20:] if len(values) > 20 else values for name, values in indicators_result.items()}
         
         # Get latest sentiment

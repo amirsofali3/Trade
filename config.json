@@ -58,6 +58,7 @@
   "indicators": {
     "use_selected_only": false,
     "min_active_features": 10,
-    "profile": true
+    "profile": true,
+    "full_refresh_every_n_cycles": 60
   }
 }
