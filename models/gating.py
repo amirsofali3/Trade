@@ -802,15 +802,7 @@ class FeatureGatingModule(nn.Module):
                 # For indicators, create weight vector based on individual selections
                 group_weights = torch.full((group_dim,), self.min_weight)
                 
-                indicator_names = [
-                    'sma', 'ema', 'rsi', 'macd', 'macd_signal', 'macd_hist',
-                    'stoch_k', 'stoch_d', 'bbands_upper', 'bbands_middle', 'bbands_lower',
-                    'adx', 'atr', 'supertrend', 'willr', 'mfi', 'obv', 'ad', 'vwap',
-                    'engulfing', 'ppo', 'psar', 'trix', 'dmi', 'aroon', 'cci', 'dpo', 
-                    'kst', 'ichimoku', 'tema', 'roc', 'momentum', 'bop', 'apo', 'cmo',
-                    'rsi_2', 'rsi_14', 'stoch_fast', 'stoch_slow', 'ultimate_osc', 
-                    'kama', 'fisher', 'awesome_osc', 'bias', 'dmi_adx', 'tsi'
-                ]
+                indicator_names = self._get_indicator_names()
                 
                 # Count strong, medium, weak indicators for this group
                 strong_indicators = []
@@ -1305,28 +1297,7 @@ class FeatureGatingModule(nn.Module):
                 active_features['indicators'] = {}
                 
                 # Map indicator indices to actual indicator names (all 100)
-                indicator_names = [
-                    'sma', 'ema', 'rsi', 'macd', 'macd_signal', 'macd_hist',
-                    'stoch_k', 'stoch_d', 'bbands_upper', 'bbands_middle', 'bbands_lower',
-                    'adx', 'atr', 'supertrend', 'willr', 'mfi', 'obv', 'ad', 'vwap',
-                    'engulfing', 'ppo', 'psar', 'trix', 'dmi', 'aroon', 'cci', 'dpo', 
-                    'kst', 'ichimoku', 'tema', 'roc', 'momentum', 'bop', 'apo', 'cmo',
-                    'rsi_2', 'rsi_14', 'stoch_fast', 'stoch_slow', 'ultimate_osc', 
-                    'kama', 'fisher', 'awesome_osc', 'bias', 'dmi_adx', 'tsi',
-                    'elder_ray', 'schaff_trend', 'chaikin_osc', 'mass_index', 'keltner',
-                    'donchian', 'volatility', 'chaikin_vol', 'std_dev', 'rvi', 
-                    'true_range', 'avg_range', 'natr', 'pvt', 'envelope', 
-                    'price_channel', 'volatility_system', 'cmf', 'emv', 'fi', 'nvi', 
-                    'pvi', 'vol_osc', 'vol_rate', 'klinger', 'vol_sma', 'vol_ema', 
-                    'mfv', 'ad_line', 'obv_ma', 'vol_price_confirm', 'vol_weighted_macd', 
-                    'ease_of_movement', 'vol_accumulation', 'shooting_star', 'hanging_man',
-                    'morning_star', 'evening_star', 'three_white_soldiers', 
-                    'three_black_crows', 'harami', 'piercing', 'dark_cloud', 
-                    'spinning_top', 'marubozu', 'gravestone_doji', 'dragonfly_doji',
-                    'tweezer', 'inside_bar', 'outside_bar', 'pin_bar', 'gap_up',
-                    'gap_down', 'long_legged_doji', 'rickshaw_man', 'belt_hold',
-                    'hammer', 'doji'
-                ]
+                indicator_names = self._get_indicator_names()
                 
                 num_indicators = len(gates_np)
                 for i in range(num_indicators):
@@ -1520,15 +1491,16 @@ class FeatureGatingModule(nn.Module):
     def _get_indicator_names(self):
         """Get list of indicator names in order they appear in feature matrix."""
         # This should match the order in IndicatorCalculator
+        # Fixed to use only base indicators that exist in IndicatorCalculator
         return [
             'sma', 'ema', 'rsi', 'macd', 'macd_signal', 'macd_hist',
             'stoch_k', 'stoch_d', 'bbands_upper', 'bbands_middle', 'bbands_lower',
             'adx', 'atr', 'supertrend', 'willr', 'mfi', 'obv', 'ad', 'vwap',
             'engulfing', 'ppo', 'psar', 'trix', 'dmi', 'aroon', 'cci', 'dpo', 
-            'kst', 'ichimoku', 'tema', 'roc', 'momentum', 'bop', 'apo', 'cmo',
+            'kst', 'tema', 'roc', 'momentum', 'bop', 'apo', 'cmo',
             'rsi_2', 'rsi_14', 'stoch_fast', 'stoch_slow', 'ultimate_osc', 
             'kama', 'fisher', 'awesome_osc', 'bias', 'dmi_adx', 'tsi',
-            'elder_ray', 'schaff_trend', 'chaikin_osc', 'mass_index', 'keltner',
+            'elder_ray', 'schaff_trend', 'chaikin_osc', 'mass_index', 
             'donchian', 'volatility', 'chaikin_vol', 'std_dev', 'rvi', 
             'true_range', 'avg_range', 'natr', 'pvt', 'envelope', 
             'price_channel', 'volatility_system', 'cmf', 'emv', 'fi', 'nvi', 
@@ -1540,8 +1512,55 @@ class FeatureGatingModule(nn.Module):
             'spinning_top', 'marubozu', 'gravestone_doji', 'dragonfly_doji',
             'tweezer', 'inside_bar', 'outside_bar', 'pin_bar', 'gap_up',
             'gap_down', 'long_legged_doji', 'rickshaw_man', 'belt_hold',
-            'hammer', 'doji'
+            'hammer', 'doji',
+            # Add composite indicator outputs as separate features
+            'stochrsi_k', 'stochrsi_d', 'keltner_upper', 'keltner_middle', 'keltner_lower',
+            'chikou', 'tenkan_sen', 'kijun_sen', 'senkou_a', 'senkou_b'
         ]
+    
+    def _get_indicator_mapping(self):
+        """
+        Get mapping from individual indicator features to their base indicators.
+        
+        Returns:
+            dict: Mapping from feature names to base indicator names
+        """
+        return {
+            # StochRSI components
+            'stochrsi_k': 'stochrsi',
+            'stochrsi_d': 'stochrsi',
+            # Keltner Channel components  
+            'keltner_upper': 'keltner',
+            'keltner_middle': 'keltner',
+            'keltner_lower': 'keltner',
+            # Ichimoku components
+            'chikou': 'ichimoku',
+            'tenkan_sen': 'ichimoku', 
+            'kijun_sen': 'ichimoku',
+            'senkou_a': 'ichimoku',
+            'senkou_b': 'ichimoku'
+        }
+    
+    def _resolve_indicator_features(self, selected_features):
+        """
+        Resolve selected indicator features to their base indicators.
+        
+        Args:
+            selected_features: List of selected feature names
+            
+        Returns:
+            set: Set of base indicator names needed
+        """
+        mapping = self._get_indicator_mapping()
+        base_indicators = set()
+        
+        for feature in selected_features:
+            if feature.startswith('indicator.'):
+                indicator_name = feature.split('.', 1)[1]
+                base_indicator = mapping.get(indicator_name, indicator_name)
+                base_indicators.add(base_indicator)
+        
+        return base_indicators
     
     def _get_indicator_index(self, indicator_name):
         """Get the index of an indicator in the feature matrix."""
