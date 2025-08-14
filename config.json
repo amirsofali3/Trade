@@ -60,5 +60,17 @@
     "min_active_features": 10,
     "profile": true,
     "full_refresh_every_n_cycles": 60
+  },
+  "inference": {
+    "interval_seconds": 60
+  },
+  "offline_pretrain": {
+    "enabled": true
+  },
+  "signals": {
+    "min_volatility_pct": 0.15
+  },
+  "loss": {
+    "use_focal": false
   }
 }

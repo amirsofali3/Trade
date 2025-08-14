@@ -121,8 +121,85 @@ def portfolio():
 
 @app.route('/api/performance')
 def performance():
-    """Return performance metrics"""
-    return jsonify(data_store['trading_data']['performance'])
+    """Return enhanced performance metrics with adaptive signaling stats"""
+    try:
+        # Get base performance data
+        base_performance = data_store['trading_data']['performance'].copy()
+        
+        # Add adaptive signaling performance metrics
+        if bot_instance and hasattr(bot_instance, 'signal_generator'):
+            signal_gen = bot_instance.signal_generator
+            
+            # Get recent signal performance
+            if hasattr(signal_gen, 'recent_signals'):
+                recent_signals = signal_gen.recent_signals[-50:]  # Last 50 signals
+                
+                if recent_signals:
+                    successful_signals = [s for s in recent_signals if s.get('successful', False)]
+                    total_signals = len(recent_signals)
+                    successful_count = len(successful_signals)
+                    
+                    # Signal success metrics
+                    base_performance['adaptive_signaling'] = {
+                        'total_signals_tracked': total_signals,
+                        'successful_signals': successful_count,
+                        'success_rate': (successful_count / total_signals) * 100 if total_signals > 0 else 0,
+                        'average_confidence': sum(s.get('confidence', 0) for s in recent_signals) / total_signals if total_signals > 0 else 0,
+                        'average_volatility': sum(s.get('volatility_pct', 0) for s in recent_signals) / total_signals if total_signals > 0 else 0,
+                    }
+                    
+                    # Calculate profit metrics if available
+                    profitable_signals = [s for s in successful_signals if s.get('profit_loss', 0) > 0]
+                    if profitable_signals:
+                        total_profit = sum(s.get('profit_loss', 0) for s in profitable_signals)
+                        avg_profit = total_profit / len(profitable_signals)
+                        base_performance['adaptive_signaling']['total_tracked_profit'] = total_profit
+                        base_performance['adaptive_signaling']['average_profit_per_signal'] = avg_profit
+                    
+                    # Volatility-based performance breakdown
+                    high_vol_signals = [s for s in recent_signals if s.get('volatility_pct', 0) > 0.5]
+                    low_vol_signals = [s for s in recent_signals if s.get('volatility_pct', 0) < 0.25]
+                    
+                    base_performance['adaptive_signaling']['high_volatility_performance'] = {
+                        'count': len(high_vol_signals),
+                        'success_rate': (len([s for s in high_vol_signals if s.get('successful', False)]) / len(high_vol_signals) * 100) if high_vol_signals else 0
+                    }
+                    
+                    base_performance['adaptive_signaling']['low_volatility_performance'] = {
+                        'count': len(low_vol_signals),
+                        'success_rate': (len([s for s in low_vol_signals if s.get('successful', False)]) / len(low_vol_signals) * 100) if low_vol_signals else 0
+                    }
+        
+        # Add inference scheduler performance
+        if bot_instance and hasattr(bot_instance, 'inference_stats'):
+            inference_stats = bot_instance.inference_stats
+            base_performance['inference_scheduler'] = {
+                'total_inferences': inference_stats.get('total_inferences', 0),
+                'success_rate': (inference_stats.get('successful_inferences', 0) / max(1, inference_stats.get('total_inferences', 1))) * 100,
+                'average_inference_time': inference_stats.get('avg_inference_time', 0),
+                'scheduler_active': getattr(bot_instance, 'inference_scheduler_running', False)
+            }
+        
+        # Add pretraining performance if available
+        if bot_instance and hasattr(bot_instance, 'pretrain_stats'):
+            pretrain_stats = bot_instance.pretrain_stats
+            if pretrain_stats.get('status') == 'COMPLETED':
+                base_performance['offline_pretraining'] = {
+                    'completed': True,
+                    'epochs_completed': pretrain_stats.get('epochs_completed', 0),
+                    'total_samples': pretrain_stats.get('total_samples', 0),
+                    'class_balance_improvement': pretrain_stats.get('class_balance_improvement', 0),
+                    'improvement_percentage': pretrain_stats.get('improvement_percentage', 0),
+                    'final_loss': pretrain_stats.get('loss_history', [0])[-1] if pretrain_stats.get('loss_history') else 0,
+                    'successfully_improved_balance': pretrain_stats.get('successfully_improved_balance', False)
+                }
+        
+        return jsonify(base_performance)
+        
+    except Exception as e:
+        logger.error(f"Error in /api/performance: {str(e)}")
+        # Fallback to basic performance data
+        return jsonify(data_store['trading_data']['performance'])
 
 @app.route('/api/signals')
 def signals():
@@ -169,11 +246,14 @@ def active_features():
                     'total_inactive': rfe_summary.get('total_available', 0) - rfe_summary.get('total_selected', 0),
                     'missing_selected': missing_selected,
                     'substituted_features': substituted_features,
-                    'last_rfe_time': str(last_rfe_time) if last_rfe_time else 'Never',
-                    'feature_set_version': int(feature_set_version) if isinstance(feature_set_version, (int, float)) else 1,
-                    'strong_features': rfe_summary.get('strong', 0),
-                    'medium_features': rfe_summary.get('medium', 0),
-                    'weak_features': rfe_summary.get('weak', 0)
+                    'substitution_count': len(substituted_features),
+                    'feature_set_version': feature_set_version,
+                    'last_rfe_time': last_rfe_time.isoformat() if last_rfe_time else None,
+                    'selection_summary': {
+                        'strong': rfe_summary.get('strong', 0),
+                        'medium': rfe_summary.get('medium', 0), 
+                        'weak': rfe_summary.get('weak', 0)
+                    }
                 }
             except Exception as metadata_error:
                 logger.warning(f"Error building metadata: {metadata_error}")
@@ -262,7 +342,7 @@ def health():
                 'total_selected': rfe_summary.get('total_selected', 0),
                 'total_active': total_active,
                 'missing_selected': missing_indicators,
-                'substituted_features': [],  # TODO: implement substitution tracking
+                'substituted_features': bot_instance.gating.substituted_features if hasattr(bot_instance.gating, 'substituted_features') else [],
                 'feature_set_version': bot_instance.gating.feature_set_version,
                 'mask_alignment_ok': len(missing_indicators) == 0
             }
@@ -317,6 +397,31 @@ def health():
                             if imbalance_ratio > 10:  # 10:1 ratio threshold
                                 health_status['class_distribution']['imbalanced'] = True
                                 health_status['warnings'].append(f"Severe class imbalance detected (ratio: {imbalance_ratio:.1f}:1)")
+            
+            # Inference scheduler health
+            if hasattr(bot_instance, 'inference_stats'):
+                inference_stats = bot_instance.inference_stats
+                total_inferences = inference_stats.get('total_inferences', 0)
+                success_rate = (inference_stats.get('successful_inferences', 0) / total_inferences) if total_inferences > 0 else 1.0
+                
+                health_status['inference_scheduler'] = {
+                    'active': getattr(bot_instance, 'inference_scheduler_running', False),
+                    'total_inferences': total_inferences,
+                    'success_rate': success_rate,
+                    'avg_inference_time': inference_stats.get('avg_inference_time', 0.0),
+                    'last_inference': inference_stats.get('last_inference_time'),
+                    'recent_errors': len(inference_stats.get('inference_errors', []))
+                }
+                
+                if success_rate < 0.8:
+                    health_status['warnings'].append(f"Inference scheduler success rate is low: {success_rate:.1%}")
+                
+                if not getattr(bot_instance, 'inference_scheduler_running', False):
+                    health_status['warnings'].append("Inference scheduler is not active")
+        
+        # Determine overall health status
+        if health_status['warnings'] or health_status['errors']:
+            health_status['status'] = 'degraded' if not health_status['errors'] else 'critical'
             
             # Add warnings for detected issues
             if missing_indicators:
@@ -772,6 +877,107 @@ def warmup_status():
     except Exception as e:
         logger.error(f"Error in /api/warmup-status: {str(e)}")
         return jsonify({'error': 'Failed to retrieve warmup status'}), 500
+
+@app.route('/api/inference-stats')
+def inference_stats():
+    """Return inference scheduler statistics"""
+    try:
+        if not bot_instance:
+            return jsonify({
+                'error': 'Bot instance not available'
+            }), 503
+            
+        stats = bot_instance.inference_stats.copy()
+        
+        # Calculate success rate
+        total = stats['total_inferences']
+        successful = stats['successful_inferences']
+        success_rate = (successful / total) if total > 0 else 0.0
+        
+        # Check for diversified predictions (>1 class in rolling 30)
+        predictions = data_store['trading_data'].get('predictions', [])
+        recent_predictions = predictions[-30:] if len(predictions) >= 30 else predictions
+        unique_signals = set(pred['signal'] for pred in recent_predictions if pred.get('signal'))
+        diversified = len(unique_signals) > 1
+        
+        # Calculate average confidence
+        confidences = [pred['confidence'] for pred in recent_predictions if pred.get('confidence') is not None]
+        avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+        
+        return jsonify({
+            'scheduler_active': bot_instance.inference_scheduler_running,
+            'total_inferences': total,
+            'successful_inferences': successful,
+            'failed_inferences': stats['failed_inferences'],
+            'success_rate': success_rate,
+            'avg_inference_time': stats['avg_inference_time'],
+            'last_inference_time': stats['last_inference_time'].isoformat() if stats['last_inference_time'] else None,
+            'diversified_predictions': diversified,
+            'unique_signals_in_rolling_30': len(unique_signals),
+            'avg_confidence_rolling_30': avg_confidence,
+            'recent_errors': stats['inference_errors'][-5:],  # Last 5 errors
+            'interval_seconds': bot_instance.config.get('inference', {}).get('interval_seconds', 60)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in /api/inference-stats: {str(e)}")
+        return jsonify({'error': 'Failed to retrieve inference statistics'}), 500
+
+@app.route('/api/pretrain-stats')
+def pretrain_stats():
+    """Return offline pretraining statistics"""
+    try:
+        if not bot_instance:
+            return jsonify({
+                'error': 'Bot instance not available'
+            }), 503
+        
+        pretrain_stats = bot_instance.pretrain_stats.copy()
+        
+        # Calculate derived metrics
+        if pretrain_stats.get('start_time') and pretrain_stats.get('end_time'):
+            from datetime import datetime
+            start = datetime.fromisoformat(pretrain_stats['start_time']) if isinstance(pretrain_stats['start_time'], str) else pretrain_stats['start_time']
+            end = datetime.fromisoformat(pretrain_stats['end_time']) if isinstance(pretrain_stats['end_time'], str) else pretrain_stats['end_time']
+            pretrain_stats['duration_seconds'] = (end - start).total_seconds()
+        
+        # Calculate class balance improvement
+        initial_balance = pretrain_stats.get('initial_class_balance', {})
+        final_balance = pretrain_stats.get('final_class_balance', {})
+        
+        if initial_balance and final_balance:
+            def calc_imbalance_ratio(balance):
+                percentages = [info['percentage'] for info in balance.values()]
+                if not percentages:
+                    return 0.0
+                max_pct = max(percentages)
+                min_pct = min(percentages)
+                return max_pct / min_pct if min_pct > 0 else float('inf')
+            
+            initial_imbalance = calc_imbalance_ratio(initial_balance)
+            final_imbalance = calc_imbalance_ratio(final_balance)
+            pretrain_stats['class_balance_improvement'] = initial_imbalance - final_imbalance
+            pretrain_stats['improvement_percentage'] = ((initial_imbalance - final_imbalance) / initial_imbalance * 100) if initial_imbalance > 0 else 0.0
+        
+        # Convert datetime objects to ISO strings for JSON serialization
+        if pretrain_stats.get('start_time') and not isinstance(pretrain_stats['start_time'], str):
+            pretrain_stats['start_time'] = pretrain_stats['start_time'].isoformat()
+        if pretrain_stats.get('end_time') and not isinstance(pretrain_stats['end_time'], str):
+            pretrain_stats['end_time'] = pretrain_stats['end_time'].isoformat()
+        
+        # Additional metrics
+        pretrain_stats['enabled'] = bot_instance.pretraining_enabled
+        pretrain_stats['samples_per_epoch'] = pretrain_stats.get('total_samples', 0) // max(1, pretrain_stats.get('epochs_completed', 1))
+        
+        # Check if pretraining improved class balance
+        improved_balance = pretrain_stats.get('class_balance_improvement', 0) > 0
+        pretrain_stats['successfully_improved_balance'] = improved_balance
+        
+        return jsonify(pretrain_stats)
+        
+    except Exception as e:
+        logger.error(f"Error in /api/pretrain-stats: {str(e)}")
+        return jsonify({'error': 'Failed to retrieve pretraining statistics'}), 500
 
 @app.route('/api/rolling-performance')
 def rolling_performance():

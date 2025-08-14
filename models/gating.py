@@ -1497,8 +1497,9 @@ class FeatureGatingModule(nn.Module):
                     if not np.any(active_masks[feature_name]):
                         missing_selected.append(feature_name)
         
-        # Store validation results
+        # Store validation results and perform substitution
         self.missing_selected = missing_selected
+        substituted_features = self._perform_feature_substitution(active_masks, missing_selected)
         self.substituted_features = substituted_features
         
         # Log validation results
@@ -1556,6 +1557,96 @@ class FeatureGatingModule(nn.Module):
                         # Group-level feature - activate all features in group
                         active_masks[feature_name][:] = True
                         added += 1
+    
+    def _perform_feature_substitution(self, active_masks, missing_selected):
+        """
+        Substitute missing selected features with next-ranked available features
+        
+        Args:
+            active_masks: Dictionary of active feature masks
+            missing_selected: List of missing selected feature names
+            
+        Returns:
+            list: List of substitution records (old -> new)
+        """
+        substituted_features = []
+        
+        if not missing_selected:
+            return substituted_features
+        
+        logger.info(f"Performing feature substitution for {len(missing_selected)} missing features")
+        
+        # Get all features sorted by rank (best first) 
+        all_features = [(name, info) for name, info in self.rfe_selected_features.items()]
+        all_features.sort(key=lambda x: x[1]['rank'])
+        
+        # Find available substitutes for each missing feature
+        for missing_feature in missing_selected:
+            substitute_found = False
+            
+            # Look for next-best available feature of the same type
+            for feature_name, info in all_features:
+                if info['selected']:
+                    continue  # Skip already selected features
+                
+                # For indicator features, try to substitute with another indicator
+                if missing_feature.startswith('indicator.') and feature_name.startswith('indicator.'):
+                    indicator_name = feature_name.split('.', 1)[1]
+                    idx = self._get_indicator_index(indicator_name)
+                    
+                    if idx >= 0 and idx < len(active_masks.get('indicator', [])):
+                        # Check if this indicator is actually available/implemented
+                        if self._is_indicator_available(indicator_name):
+                            active_masks['indicator'][idx] = True
+                            substituted_features.append({
+                                'original': missing_feature,
+                                'substitute': feature_name, 
+                                'rank': info['rank'],
+                                'timestamp': datetime.now()
+                            })
+                            substitute_found = True
+                            logger.info(f"Substituted {missing_feature} -> {feature_name} (rank {info['rank']})")
+                            break
+                
+                # For group-level features, substitute with same group type
+                elif not missing_feature.startswith('indicator.') and not feature_name.startswith('indicator.'):
+                    if feature_name in active_masks:
+                        active_masks[feature_name][:] = True
+                        substituted_features.append({
+                            'original': missing_feature,
+                            'substitute': feature_name,
+                            'rank': info['rank'], 
+                            'timestamp': datetime.now()
+                        })
+                        substitute_found = True
+                        logger.info(f"Substituted {missing_feature} -> {feature_name} (rank {info['rank']})")
+                        break
+            
+            if not substitute_found:
+                logger.warning(f"No substitute found for missing feature: {missing_feature}")
+        
+        return substituted_features
+    
+    def _is_indicator_available(self, indicator_name):
+        """
+        Check if an indicator is actually implemented and available
+        
+        Args:
+            indicator_name: Name of the indicator
+            
+        Returns:
+            bool: True if indicator is available
+        """
+        # This would typically check against the indicator calculator's available indicators
+        # For now, we'll assume most common indicators are available
+        common_indicators = {
+            'sma', 'ema', 'rsi', 'macd', 'bbands', 'atr', 'adx', 'stoch', 'cci',
+            'supertrend', 'keltner', 'donchian', 'ichimoku', 'stochrsi', 'mfi'
+        }
+        
+        # Extract base indicator name (remove any suffixes like _upper, _k, etc)
+        base_name = indicator_name.split('_')[0] if '_' in indicator_name else indicator_name
+        return base_name in common_indicators
     
     def _get_indicator_names(self):
         """Get list of indicator names in order they appear in feature matrix."""
