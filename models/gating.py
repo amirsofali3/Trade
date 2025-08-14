@@ -9,6 +9,7 @@ from datetime import datetime
 import tempfile
 import os
 from .locks import rfe_lock
+from .feature_catalog import get_feature_catalog
 
 logger = logging.getLogger("Gating")
 
@@ -55,6 +56,14 @@ class FeatureGatingModule(nn.Module):
         self.adaptation_rate = adaptation_rate
         self.rfe_enabled = rfe_enabled
         self.rfe_n_features = rfe_n_features
+        
+        # Load feature catalog for RFE filtering
+        self.feature_catalog = get_feature_catalog()
+        logger.info(f"Loaded feature catalog with {self.feature_catalog.get_summary()['total_features']} features")
+        
+        # Feature metadata for tracking  
+        self.pool_candidates = 0
+        self.must_keep_count = 0
         
         # Calculate total input dimension
         self.total_dim = sum(feature_groups.values())
@@ -286,9 +295,61 @@ class FeatureGatingModule(nn.Module):
             # Log prepared input
             logger.info(f"RFE input prepared: X shape=({X_clean.shape[0]}, {X_clean.shape[1]}), y shape=({y_clean.shape[0]})")
             
-            if X_clean.shape[1] == 0:
-                logger.warning("RFE aborted: 0 features after cleaning")
-                return {}
+            # Apply feature catalog filtering - separate must-keep from RFE candidates
+            must_keep_features = []
+            must_keep_indices = []
+            rfe_candidate_features = []
+            rfe_candidate_indices = []
+            
+            for idx, feature_name in enumerate(feature_names):
+                if self._is_core_or_prereq(feature_name) or self.feature_catalog.is_must_keep(feature_name):
+                    must_keep_features.append(feature_name)
+                    must_keep_indices.append(idx)
+                elif self.feature_catalog.is_rfe_eligible(feature_name):
+                    rfe_candidate_features.append(feature_name)
+                    rfe_candidate_indices.append(idx)
+                else:
+                    # Feature is not in catalog - treat as RFE candidate by default for backward compatibility
+                    rfe_candidate_features.append(feature_name)
+                    rfe_candidate_indices.append(idx)
+            
+            # Update tracking metadata
+            self.must_keep_count = len(must_keep_features)
+            self.pool_candidates = len(rfe_candidate_features)
+            
+            logger.info(f"Feature catalog filtering: must_keep={self.must_keep_count}, rfe_candidates={self.pool_candidates}")
+            
+            # If we have no RFE candidates, use fallback
+            if len(rfe_candidate_indices) == 0:
+                logger.warning("No RFE candidate features found after catalog filtering. Using fallback.")
+                # Still preserve must-keep features in results
+                self.rfe_selected_features = {}
+                for feature_name in must_keep_features:
+                    self.rfe_selected_features[feature_name] = {
+                        'rank': 0,  # Synthetic rank for must-keep
+                        'importance': 1.0,
+                        'selected': True
+                    }
+                self.rfe_performed = True
+                return self.rfe_selected_features
+            
+            # Extract RFE candidate data for actual RFE processing
+            X_rfe_candidates = X_clean[:, rfe_candidate_indices] if rfe_candidate_indices else np.empty((X_clean.shape[0], 0))
+            
+            logger.info(f"RFE will process {X_rfe_candidates.shape[1]} candidate features (excluding {self.must_keep_count} must-keep)")
+            
+            if X_rfe_candidates.shape[1] == 0:
+                logger.warning("RFE aborted: 0 candidate features after catalog filtering")
+                # Still return must-keep features
+                self.rfe_selected_features = {}
+                for feature_name in must_keep_features:
+                    self.rfe_selected_features[feature_name] = {
+                        'rank': 0,  # Synthetic rank for must-keep
+                        'importance': 1.0,
+                        'selected': True
+                    }
+                self.rfe_performed = True
+                return self.rfe_selected_features
             
             if len(X_clean) < 5:
                 logger.warning(f"RFE aborted: only {len(X_clean)} samples after cleaning, need at least 5")
@@ -335,48 +396,92 @@ class FeatureGatingModule(nn.Module):
                     n_jobs=1
                 )
             
-            logger.info(f"Starting RFE with {X_clean.shape[0]} samples, {X_clean.shape[1]} features")
+            logger.info(f"Starting RFE with {X_clean.shape[0]} samples, {X_rfe_candidates.shape[1]} candidate features")
             
-            # Perform RFE
-            n_features_to_select = min(self.rfe_n_features, X_clean.shape[1])
-            logger.info(f"Selecting top {n_features_to_select} features via RFE...")
+            # Perform RFE only on candidate features
+            n_features_to_select = min(self.rfe_n_features, X_rfe_candidates.shape[1])
             
-            rfe = RFE(
-                estimator=rf_estimator,
-                n_features_to_select=n_features_to_select,
-                step=1
-            )
+            # Handle edge case where no RFE selection is desired (rfe_n_features=0)
+            if n_features_to_select == 0:
+                logger.info("RFE n_features set to 0 - selecting no candidate features, only must-keep")
+                # Skip RFE entirely, just use must-keep features
+                rfe_selected_indices = np.array([])  # No RFE selections
+                rfe_rankings = np.arange(1, len(rfe_candidate_features) + 1)  # Sequential rankings
+            else:
+                logger.info(f"Selecting top {n_features_to_select} features via RFE from {X_rfe_candidates.shape[1]} candidates...")
+                
+                rfe = RFE(
+                    estimator=rf_estimator,
+                    n_features_to_select=n_features_to_select,
+                    step=1
+                )
+                
+                rfe.fit(X_rfe_candidates, y_clean)
+                
+                # Get RFE results
+                rfe_selected_indices = np.where(rfe.support_)[0]
+                rfe_rankings = rfe.ranking_
             
-            rfe.fit(X_clean, y_clean)
-            
-            # Store results
-            selected_indices = np.where(rfe.support_)[0]
-            rankings = rfe.ranking_
-            
+            # Store results - combine must-keep and RFE selected features
             self.rfe_selected_features = {}
             self.rfe_feature_rankings = {}
             
+            # First, add all must-keep features with synthetic rank 0 and high importance
+            for feature_name in must_keep_features:
+                self.rfe_selected_features[feature_name] = {
+                    'rank': 0,  # Synthetic rank for must-keep (always highest priority)
+                    'importance': 1.0,  # High importance for must-keep
+                    'selected': True
+                }
+                self.rfe_feature_rankings[feature_name] = 0
+                
             logger.info("🎯 RFE Feature Selection Results:")
-            logger.info(f"Selected {len(selected_indices)} out of {len(feature_names)} features:")
+            logger.info(f"Must-keep features: {len(must_keep_features)}")
+            for feature_name in must_keep_features:
+                logger.info(f"  🔒 {feature_name} (must-keep)")
             
-            for i, (feature_name, rank) in enumerate(zip(feature_names, rankings)):
-                self.rfe_feature_rankings[feature_name] = int(rank)  # Convert to native int
-                is_selected = i in selected_indices
+            logger.info(f"RFE selected {len(rfe_selected_indices)} out of {len(rfe_candidate_features)} candidate features:")
+            
+            # Then add RFE candidate results
+            for i, feature_name in enumerate(rfe_candidate_features):
+                original_idx = rfe_candidate_indices[i]
+                rank = int(rfe_rankings[i])
+                is_selected = i in rfe_selected_indices
+                
+                self.rfe_feature_rankings[feature_name] = rank
                 
                 if is_selected:
+                    # For RFE-selected features, get importance from model if available
+                    if n_features_to_select > 0 and hasattr(rf_estimator, 'feature_importances_'):
+                        importance = float(rf_estimator.feature_importances_[i])
+                    else:
+                        importance = 0.5  # Default importance
                     self.rfe_selected_features[feature_name] = {
-                        'rank': int(rank),  # Convert to native int
-                        'importance': float(rf_estimator.feature_importances_[i]) if hasattr(rf_estimator, 'feature_importances_') else 0.0,
+                        'rank': rank,
+                        'importance': importance,
                         'selected': True
                     }
                     logger.info(f"  ✅ {feature_name} (rank: {rank})")
                 else:
-                    # Still track unselected features but mark them
+                    # Track unselected candidates with low importance
                     self.rfe_selected_features[feature_name] = {
-                        'rank': int(rank),  # Convert to native int
+                        'rank': rank,
                         'importance': 0.01,  # Low importance for unselected
                         'selected': False
                     }
+            
+            # Log final summary with pool statistics
+            total_selected = len([f for f in self.rfe_selected_features.values() if f['selected']])
+            selected_from_pool = len(rfe_selected_indices)
+            logger.info(f"RFE Pool: candidates={self.pool_candidates}, must_keep={self.must_keep_count}, "
+                       f"selected_from_pool={selected_from_pool}, final_selected={total_selected}")
+            
+            # Set RFE completed flag
+            self.rfe_performed = True
+            self.last_rfe_time = time.time()
+            self.feature_set_version += 1
+            if n_features_to_select > 0:
+                self.rfe_model = rfe
             
             # Update feature performance tracking
             for group_name in self.feature_performance:
@@ -393,11 +498,6 @@ class FeatureGatingModule(nn.Module):
                     if group_name in self.rfe_selected_features:
                         self.feature_performance[group_name]['rfe_selected'] = self.rfe_selected_features[group_name]['selected']
                         self.feature_performance[group_name]['rfe_rank'] = self.rfe_selected_features[group_name]['rank']
-            
-            self.rfe_performed = True
-            self.last_rfe_time = time.time()
-            self.feature_set_version += 1
-            self.rfe_model = rfe
             
             # Populate new unified RFE state attributes
             self.rfe_all_features = feature_names.copy()  # Cleaned feature names before selection
@@ -971,6 +1071,9 @@ class FeatureGatingModule(nn.Module):
                 'total_available': 0,
                 'total_cleaned': 0,
                 'total_selected': 0,
+                'pool_candidates': 0,
+                'must_keep_count': 0,
+                'final_selected': 0,
                 'strong': 0,
                 'medium': 0, 
                 'weak': 0,
@@ -996,6 +1099,9 @@ class FeatureGatingModule(nn.Module):
             'total_available': total_available,
             'total_cleaned': total_cleaned,
             'total_selected': total_selected,
+            'pool_candidates': getattr(self, 'pool_candidates', 0),
+            'must_keep_count': getattr(self, 'must_keep_count', 0),
+            'final_selected': total_selected,  # For consistency with logging
             'strong': self.rfe_counts['strong'],
             'medium': self.rfe_counts['medium'],
             'weak': self.rfe_counts['weak'],
@@ -1435,17 +1541,37 @@ class FeatureGatingModule(nn.Module):
                 # For indicators, check each individual indicator
                 for i, indicator_name in enumerate(self._get_indicator_names()):
                     feature_key = f"indicator.{indicator_name}"
-                    is_selected = (feature_key in self.rfe_selected_features and 
-                                 self.rfe_selected_features[feature_key]['selected'])
-                    group_mask.append(is_selected)
+                    
+                    # Always activate must-keep features even if not in RFE results
+                    is_must_keep = self._is_core_or_prereq(feature_key) or self.feature_catalog.is_must_keep(feature_key)
+                    is_rfe_selected = (feature_key in self.rfe_selected_features and 
+                                     self.rfe_selected_features[feature_key]['selected'])
+                    
+                    # Feature is active if it's must-keep OR RFE-selected
+                    is_active = is_must_keep or is_rfe_selected
+                    group_mask.append(is_active)
+                    
+                    if is_must_keep and not is_rfe_selected:
+                        logger.debug(f"Activating must-keep feature: {feature_key}")
+                        
             else:
-                # For other groups (ohlcv, sentiment, orderbook), check group-level selection
+                # For other groups (ohlcv, sentiment, orderbook)
                 feature_key = group_name
-                is_selected = (feature_key in self.rfe_selected_features and 
-                             self.rfe_selected_features[feature_key]['selected'])
+                
+                # Always activate core groups (ohlcv should always be active)
+                is_core_group = group_name == 'ohlcv'
+                is_rfe_selected = (feature_key in self.rfe_selected_features and 
+                                 self.rfe_selected_features[feature_key]['selected'])
+                
+                # Group is active if it's core OR RFE-selected
+                is_active = is_core_group or is_rfe_selected
+                
                 # Create mask for all features in the group
                 group_size = self.feature_groups[group_name]
-                group_mask = [is_selected] * group_size
+                group_mask = [is_active] * group_size
+                
+                if is_core_group and not is_rfe_selected:
+                    logger.debug(f"Activating core group: {group_name}")
             
             active_masks[group_name] = np.array(group_mask, dtype=bool)
         
@@ -1808,6 +1934,65 @@ class FeatureGatingModule(nn.Module):
         feature_string = '|'.join(sorted_features)
         
         return hashlib.sha1(feature_string.encode('utf-8')).hexdigest()[:12]
+    
+    def _base_indicator_name(self, feature_name: str) -> str:
+        """
+        Extract base indicator name from feature name, stripping prefixes and suffixes.
+        
+        This helper function normalizes feature names for catalog lookups by removing
+        group prefixes like 'indicator.' and handling composite notation.
+        
+        Args:
+            feature_name: Full feature name (e.g., 'indicator.SMA_5', 'ohlcv.Close')
+            
+        Returns:
+            str: Base indicator name (e.g., 'SMA_5', 'Close')
+            
+        Examples:
+            - 'indicator.SMA_5' -> 'SMA_5'
+            - 'ohlcv.Close' -> 'Close'  
+            - 'sentiment.fear_greed' -> 'fear_greed'
+            - 'SMA_5' -> 'SMA_5' (no change if no prefix)
+        """
+        if '.' in feature_name:
+            return feature_name.split('.', 1)[1]
+        return feature_name
+    
+    def _is_core_or_prereq(self, feature_name: str) -> bool:
+        """
+        Identify if a feature is core OHLCV or prerequisite using catalog sets.
+        
+        Core features include basic OHLCV data (Open, High, Low, Close, Volume, Timestamp)
+        and order book L1 data if present. Prerequisite features are derived values needed
+        by technical indicators (e.g., True Range, Typical Price).
+        
+        Args:
+            feature_name: Feature name to check
+            
+        Returns:
+            bool: True if feature is core OHLCV or prerequisite, False otherwise
+        """
+        base_name = self._base_indicator_name(feature_name)
+        
+        # Check if it's in the prereq set from catalog
+        if self.feature_catalog.is_prereq(base_name):
+            return True
+            
+        # Check for core OHLCV features (case-insensitive)
+        core_ohlcv = {'timestamp', 'open', 'high', 'low', 'close', 'volume', 'symbol'}
+        if base_name.lower() in core_ohlcv:
+            return True
+            
+        # Check for core order book L1 features
+        l1_features = {'best bid price (l1)', 'best ask price (l1)', 'best bid size (l1)', 'best ask size (l1)'}
+        if base_name.lower() in l1_features:
+            return True
+            
+        # Check if feature name starts with group indicating core data
+        if feature_name.startswith('ohlcv.'):
+            return True
+            
+        return False
     
     def save_rfe_summary_with_version(self, checkpoint_path=None):
         """

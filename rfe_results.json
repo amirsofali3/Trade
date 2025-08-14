@@ -1,0 +1,54 @@
+{
+  "last_run": "2025-08-14T16:03:23.643534",
+  "timestamp": "2025-08-14T16:03:23.643541",
+  "method": "RandomForestRFE",
+  "ranked_features": [
+    {
+      "name": "ohlcv.open",
+      "rank": 0,
+      "importance": 1.0,
+      "selected": true
+    },
+    {
+      "name": "ohlcv.close",
+      "rank": 0,
+      "importance": 1.0,
+      "selected": true
+    },
+    {
+      "name": "indicator.indicator_1",
+      "rank": 1,
+      "importance": 0.01,
+      "selected": false
+    }
+  ],
+  "selected": [
+    "ohlcv.open",
+    "ohlcv.close"
+  ],
+  "selected_features": {
+    "ohlcv.open": {
+      "rank": 0,
+      "importance": 1.0,
+      "selected": true
+    },
+    "ohlcv.close": {
+      "rank": 0,
+      "importance": 1.0,
+      "selected": true
+    }
+  },
+  "weights_mapping": {
+    "strong": 2,
+    "medium": 0,
+    "weak": 1
+  },
+  "n_features_selected": 2,
+  "total_features": 3,
+  "rfe_n_features_target": 0,
+  "performance_summary": {
+    "selection_criteria": "Top features based on predictive importance or variance",
+    "weak_feature_handling": "Assigned minimum weight of 0.01",
+    "strong_feature_boost": "High-impact features receive proportional weights 0.7-0.9"
+  }
+}
