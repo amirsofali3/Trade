@@ -1,10 +1,22 @@
 {
-  "last_run": "2025-08-14T16:03:23.643534",
-  "timestamp": "2025-08-14T16:03:23.643541",
+  "last_run": "2025-08-14T16:04:52.643217",
+  "timestamp": "2025-08-14T16:04:52.643225",
   "method": "RandomForestRFE",
   "ranked_features": [
     {
       "name": "ohlcv.open",
+      "rank": 0,
+      "importance": 1.0,
+      "selected": true
+    },
+    {
+      "name": "ohlcv.high",
+      "rank": 0,
+      "importance": 1.0,
+      "selected": true
+    },
+    {
+      "name": "ohlcv.low",
       "rank": 0,
       "importance": 1.0,
       "selected": true
@@ -16,18 +28,225 @@
       "selected": true
     },
     {
-      "name": "indicator.indicator_1",
+      "name": "ohlcv.volume",
+      "rank": 0,
+      "importance": 1.0,
+      "selected": true
+    },
+    {
+      "name": "indicator.ATR_14",
       "rank": 1,
+      "importance": 0.5,
+      "selected": true
+    },
+    {
+      "name": "indicator.MFI_14",
+      "rank": 1,
+      "importance": 0.5,
+      "selected": true
+    },
+    {
+      "name": "indicator.custom_ind_0",
+      "rank": 1,
+      "importance": 0.5,
+      "selected": true
+    },
+    {
+      "name": "indicator.custom_ind_2",
+      "rank": 1,
+      "importance": 0.5,
+      "selected": true
+    },
+    {
+      "name": "indicator.custom_ind_4",
+      "rank": 1,
+      "importance": 0.5,
+      "selected": true
+    },
+    {
+      "name": "orderbook.orderbook_feature_2",
+      "rank": 1,
+      "importance": 0.5,
+      "selected": true
+    },
+    {
+      "name": "orderbook.orderbook_feature_7",
+      "rank": 1,
+      "importance": 0.5,
+      "selected": true
+    },
+    {
+      "name": "orderbook.orderbook_feature_9",
+      "rank": 1,
+      "importance": 0.5,
+      "selected": true
+    },
+    {
+      "name": "orderbook.orderbook_feature_6",
+      "rank": 2,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "orderbook.orderbook_feature_3",
+      "rank": 3,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.custom_ind_5",
+      "rank": 4,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "orderbook.orderbook_feature_8",
+      "rank": 5,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.custom_ind_3",
+      "rank": 6,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.RSI_14",
+      "rank": 7,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.MACD_12_26_9",
+      "rank": 8,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "orderbook.orderbook_feature_1",
+      "rank": 9,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.Volume_SMA_20",
+      "rank": 10,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.SMA_5",
+      "rank": 11,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.Bollinger_20_x2.0",
+      "rank": 12,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "orderbook.orderbook_feature_0",
+      "rank": 13,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.custom_ind_9",
+      "rank": 14,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.SMA_20",
+      "rank": 15,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.custom_ind_8",
+      "rank": 16,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.custom_ind_7",
+      "rank": 17,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.custom_ind_6",
+      "rank": 18,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.EMA_10",
+      "rank": 19,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.custom_ind_1",
+      "rank": 20,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "indicator.Stoch_%K_14",
+      "rank": 21,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "orderbook.orderbook_feature_5",
+      "rank": 22,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "sentiment.fear_greed_index",
+      "rank": 23,
+      "importance": 0.01,
+      "selected": false
+    },
+    {
+      "name": "orderbook.orderbook_feature_4",
+      "rank": 24,
       "importance": 0.01,
       "selected": false
     }
   ],
   "selected": [
     "ohlcv.open",
-    "ohlcv.close"
+    "ohlcv.high",
+    "ohlcv.low",
+    "ohlcv.close",
+    "ohlcv.volume",
+    "indicator.ATR_14",
+    "indicator.MFI_14",
+    "indicator.custom_ind_0",
+    "indicator.custom_ind_2",
+    "indicator.custom_ind_4",
+    "orderbook.orderbook_feature_2",
+    "orderbook.orderbook_feature_7",
+    "orderbook.orderbook_feature_9"
   ],
   "selected_features": {
     "ohlcv.open": {
+      "rank": 0,
+      "importance": 1.0,
+      "selected": true
+    },
+    "ohlcv.high": {
+      "rank": 0,
+      "importance": 1.0,
+      "selected": true
+    },
+    "ohlcv.low": {
       "rank": 0,
       "importance": 1.0,
       "selected": true
@@ -36,16 +255,61 @@
       "rank": 0,
       "importance": 1.0,
       "selected": true
+    },
+    "ohlcv.volume": {
+      "rank": 0,
+      "importance": 1.0,
+      "selected": true
+    },
+    "indicator.ATR_14": {
+      "rank": 1,
+      "importance": 0.5,
+      "selected": true
+    },
+    "indicator.MFI_14": {
+      "rank": 1,
+      "importance": 0.5,
+      "selected": true
+    },
+    "indicator.custom_ind_0": {
+      "rank": 1,
+      "importance": 0.5,
+      "selected": true
+    },
+    "indicator.custom_ind_2": {
+      "rank": 1,
+      "importance": 0.5,
+      "selected": true
+    },
+    "indicator.custom_ind_4": {
+      "rank": 1,
+      "importance": 0.5,
+      "selected": true
+    },
+    "orderbook.orderbook_feature_2": {
+      "rank": 1,
+      "importance": 0.5,
+      "selected": true
+    },
+    "orderbook.orderbook_feature_7": {
+      "rank": 1,
+      "importance": 0.5,
+      "selected": true
+    },
+    "orderbook.orderbook_feature_9": {
+      "rank": 1,
+      "importance": 0.5,
+      "selected": true
     }
   },
   "weights_mapping": {
-    "strong": 2,
-    "medium": 0,
-    "weak": 1
+    "strong": 5,
+    "medium": 8,
+    "weak": 23
   },
-  "n_features_selected": 2,
-  "total_features": 3,
-  "rfe_n_features_target": 0,
+  "n_features_selected": 13,
+  "total_features": 36,
+  "rfe_n_features_target": 8,
   "performance_summary": {
     "selection_criteria": "Top features based on predictive importance or variance",
     "weak_feature_handling": "Assigned minimum weight of 0.01",
