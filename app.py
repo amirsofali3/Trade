@@ -262,7 +262,7 @@ def health():
                 'total_selected': rfe_summary.get('total_selected', 0),
                 'total_active': total_active,
                 'missing_selected': missing_indicators,
-                'substituted_features': [],  # TODO: implement substitution tracking
+                'substituted_features': bot_instance.gating.substituted_features if hasattr(bot_instance.gating, 'substituted_features') else [],
                 'feature_set_version': bot_instance.gating.feature_set_version,
                 'mask_alignment_ok': len(missing_indicators) == 0
             }
@@ -317,6 +317,31 @@ def health():
                             if imbalance_ratio > 10:  # 10:1 ratio threshold
                                 health_status['class_distribution']['imbalanced'] = True
                                 health_status['warnings'].append(f"Severe class imbalance detected (ratio: {imbalance_ratio:.1f}:1)")
+            
+            # Inference scheduler health
+            if hasattr(bot_instance, 'inference_stats'):
+                inference_stats = bot_instance.inference_stats
+                total_inferences = inference_stats.get('total_inferences', 0)
+                success_rate = (inference_stats.get('successful_inferences', 0) / total_inferences) if total_inferences > 0 else 1.0
+                
+                health_status['inference_scheduler'] = {
+                    'active': getattr(bot_instance, 'inference_scheduler_running', False),
+                    'total_inferences': total_inferences,
+                    'success_rate': success_rate,
+                    'avg_inference_time': inference_stats.get('avg_inference_time', 0.0),
+                    'last_inference': inference_stats.get('last_inference_time'),
+                    'recent_errors': len(inference_stats.get('inference_errors', []))
+                }
+                
+                if success_rate < 0.8:
+                    health_status['warnings'].append(f"Inference scheduler success rate is low: {success_rate:.1%}")
+                
+                if not getattr(bot_instance, 'inference_scheduler_running', False):
+                    health_status['warnings'].append("Inference scheduler is not active")
+        
+        # Determine overall health status
+        if health_status['warnings'] or health_status['errors']:
+            health_status['status'] = 'degraded' if not health_status['errors'] else 'critical'
             
             # Add warnings for detected issues
             if missing_indicators:
@@ -772,6 +797,51 @@ def warmup_status():
     except Exception as e:
         logger.error(f"Error in /api/warmup-status: {str(e)}")
         return jsonify({'error': 'Failed to retrieve warmup status'}), 500
+
+@app.route('/api/inference-stats')
+def inference_stats():
+    """Return inference scheduler statistics"""
+    try:
+        if not bot_instance:
+            return jsonify({
+                'error': 'Bot instance not available'
+            }), 503
+            
+        stats = bot_instance.inference_stats.copy()
+        
+        # Calculate success rate
+        total = stats['total_inferences']
+        successful = stats['successful_inferences']
+        success_rate = (successful / total) if total > 0 else 0.0
+        
+        # Check for diversified predictions (>1 class in rolling 30)
+        predictions = data_store['trading_data'].get('predictions', [])
+        recent_predictions = predictions[-30:] if len(predictions) >= 30 else predictions
+        unique_signals = set(pred['signal'] for pred in recent_predictions if pred.get('signal'))
+        diversified = len(unique_signals) > 1
+        
+        # Calculate average confidence
+        confidences = [pred['confidence'] for pred in recent_predictions if pred.get('confidence') is not None]
+        avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+        
+        return jsonify({
+            'scheduler_active': bot_instance.inference_scheduler_running,
+            'total_inferences': total,
+            'successful_inferences': successful,
+            'failed_inferences': stats['failed_inferences'],
+            'success_rate': success_rate,
+            'avg_inference_time': stats['avg_inference_time'],
+            'last_inference_time': stats['last_inference_time'].isoformat() if stats['last_inference_time'] else None,
+            'diversified_predictions': diversified,
+            'unique_signals_in_rolling_30': len(unique_signals),
+            'avg_confidence_rolling_30': avg_confidence,
+            'recent_errors': stats['inference_errors'][-5:],  # Last 5 errors
+            'interval_seconds': bot_instance.config.get('inference', {}).get('interval_seconds', 60)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in /api/inference-stats: {str(e)}")
+        return jsonify({'error': 'Failed to retrieve inference statistics'}), 500
 
 @app.route('/api/rolling-performance')
 def rolling_performance():

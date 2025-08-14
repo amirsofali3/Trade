@@ -98,6 +98,18 @@ class TradingBot:
         # Communication queue with web interface
         self.message_queue = app.bot_message_queue
         
+        # Independent inference scheduler (Phase 2 requirement)
+        self.inference_scheduler_running = False
+        self.inference_stats = {
+            'total_inferences': 0,
+            'successful_inferences': 0,
+            'failed_inferences': 0,
+            'avg_inference_time': 0.0,
+            'last_inference_time': None,
+            'inference_errors': []
+        }
+        self.inference_thread = None
+        
         # Set bot instance for web interface access to RFE and features
         app.bot_instance = self
         
@@ -1006,6 +1018,14 @@ class TradingBot:
         self.web_thread.daemon = True
         self.web_thread.start()
         logger.info("Started web interface")
+        
+        # Start independent inference scheduler (Phase 2 requirement)
+        interval_seconds = self.config.get('inference', {}).get('interval_seconds', 60)
+        self.inference_scheduler_running = True
+        self.inference_thread = threading.Thread(target=self._inference_scheduler_loop, args=(interval_seconds,))
+        self.inference_thread.daemon = True
+        self.inference_thread.start()
+        logger.info(f"Started inference scheduler with {interval_seconds}s intervals")
     
     def stop(self):
         """Stop the trading bot"""
@@ -1015,6 +1035,10 @@ class TradingBot:
         
         logger.info("Stopping trading bot...")
         self.is_running = False
+        
+        # Stop inference scheduler
+        self.inference_scheduler_running = False
+        logger.info("Stopped inference scheduler")
         
         # Stop data collectors
         for name, collector in self.collectors.items():
@@ -1031,6 +1055,95 @@ class TradingBot:
         logger.info("Stopped trade executor")
         
         logger.info("Trading bot stopped")
+    
+    def _inference_scheduler_loop(self, interval_seconds):
+        """
+        Independent inference scheduler that runs every N seconds
+        
+        Args:
+            interval_seconds: Interval between inference runs
+        """
+        logger.info(f"Starting inference scheduler loop (every {interval_seconds}s)")
+        
+        while self.inference_scheduler_running and self.is_running:
+            try:
+                start_time = time.time()
+                
+                # Perform inference
+                inference_success = self._perform_scheduled_inference()
+                
+                # Update stats
+                inference_time = time.time() - start_time
+                self.inference_stats['total_inferences'] += 1
+                self.inference_stats['last_inference_time'] = datetime.now()
+                
+                if inference_success:
+                    self.inference_stats['successful_inferences'] += 1
+                else:
+                    self.inference_stats['failed_inferences'] += 1
+                
+                # Update average inference time
+                total_successful = self.inference_stats['successful_inferences']
+                if total_successful > 0:
+                    current_avg = self.inference_stats['avg_inference_time']
+                    self.inference_stats['avg_inference_time'] = (current_avg * (total_successful - 1) + inference_time) / total_successful
+                    
+                logger.debug(f"Inference completed in {inference_time:.3f}s, success: {inference_success}")
+                
+            except Exception as e:
+                logger.error(f"Error in inference scheduler: {e}")
+                self.inference_stats['failed_inferences'] += 1
+                self.inference_stats['inference_errors'].append({
+                    'timestamp': datetime.now(),
+                    'error': str(e)
+                })
+                
+                # Keep only last 10 errors
+                if len(self.inference_stats['inference_errors']) > 10:
+                    self.inference_stats['inference_errors'] = self.inference_stats['inference_errors'][-10:]
+            
+            # Wait for next cycle
+            time.sleep(interval_seconds)
+        
+        logger.info("Inference scheduler loop stopped")
+    
+    def _perform_scheduled_inference(self):
+        """
+        Perform a scheduled inference run
+        
+        Returns:
+            bool: True if inference was successful
+        """
+        try:
+            # Collect fresh data for inference
+            data = self._collect_data()
+            if not data:
+                return False
+            
+            # Perform inference using the signal generator
+            if self.signal_generator and data.get('ohlcv') is not None:
+                signal_result = self.signal_generator.generate_signal(data)
+                
+                # Store prediction in web interface data store for API access
+                if signal_result:
+                    app.data_store['trading_data']['predictions'].append({
+                        'timestamp': datetime.now(),
+                        'signal': signal_result.get('signal', 'HOLD'),
+                        'confidence': signal_result.get('confidence', 0.0),
+                        'probabilities': signal_result.get('probabilities', {})
+                    })
+                    
+                    # Keep only last 100 predictions for rolling stats
+                    if len(app.data_store['trading_data']['predictions']) > 100:
+                        app.data_store['trading_data']['predictions'] = app.data_store['trading_data']['predictions'][-100:]
+                
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error in scheduled inference: {e}")
+            return False
     
     def _main_loop(self):
         """Main bot loop"""
